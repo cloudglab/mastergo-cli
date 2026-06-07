@@ -1,0 +1,40 @@
+{
+  "name": "@cloudglab/mastergo-cli",
+  "version": "0.1.0",
+  "description": "MasterGo CLI and AI skill package for design DSL, D2C/C2D, metadata, and component workflow access",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cloudglab/mastergo-cli.git"
+  },
+  "type": "module",
+  "bin": {
+    "mastergo": "bin/mastergo.js",
+    "mastergo-cli": "bin/mastergo.js"
+  },
+  "files": [
+    "bin",
+    "skills",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "check": "node bin/mastergo.js help",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "keywords": [
+    "mastergo",
+    "cli",
+    "skill",
+    "design-to-code",
+    "mastergo-api"
+  ],
+  "author": "Jeason",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
