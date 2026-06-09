@@ -12,6 +12,7 @@
     "mastergo-cli": "bin/mastergo.js"
   },
   "files": [
+    "assets",
     "bin",
     "skills",
     "README.md",

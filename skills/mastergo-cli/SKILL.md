@@ -32,7 +32,8 @@ argument-hint: "[mastergo-url|command]"
 
 | 场景 | 优先工具 |
 |------|----------|
-| 获取 DSL 和生成规则 | `mastergo dsl`，输出包含 `dsl`、`componentDocumentLinks`、`rules` |
+| 获取 DSL 和生成规则 | `mastergo dsl`，输出包含 `dsl`、`componentDocumentLinks`、`rules`；大文件可加 `--simplify` 降低 token 消耗 |
+| 大设计稿 / 完整页面实现 | 优先 `mastergo design-sections` 获取概览和所有 section，再用 `mastergo design-svgs` / `mastergo design-texts` 补视觉和文本 |
 | 获取 D2C 代码和资源 | `mastergo d2c`，落盘 Vue/HTML 代码、SVG、图片资源 |
 | HTML 代码同步到设计稿 | `mastergo c2d`，支持 `--short-link` 或 `--file-id` |
 | 获取站点 / 页面元信息 | `mastergo meta`，输出包含 `result` 和 meta 规则 |
@@ -83,6 +84,11 @@ npx -y skills add -g cloudglab/mastergo-cli
 mastergo help
 mastergo analyze "https://mastergo.com/goto/LhGgBAK"
 mastergo dsl "https://mastergo.com/goto/LhGgBAK"
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" --simplify
+mastergo design-sections "https://mastergo.com/goto/LhGgBAK"
+mastergo design-sections "https://mastergo.com/goto/LhGgBAK" --section-index 0
+mastergo design-svgs "https://mastergo.com/goto/LhGgBAK"
+mastergo design-texts "https://mastergo.com/goto/LhGgBAK"
 mastergo d2c --d2c-url "mastergo://getd2c/176452330285910-2-2845" --out-dir ./mastergo-output
 # 或
 mastergo d2c --content-id 176452330285910-2-2845 --document-id 176452330285910 --out-dir ./mastergo-output
@@ -95,7 +101,8 @@ mastergo fetch-docs "https://example.com/button.mdx"
 
 ## 使用规则
 
-- 用户说“解析设计稿 / 获取 DSL / 看结构”：用 `mastergo dsl`，必要时再用 `mastergo analyze` 做人类可读摘要
+- 用户说“完整页面 / 大设计稿 / 高保真实现 / section”：优先用 `mastergo design-sections <url>` 获取 section 概览，再按 `--section-index` 获取所有 section（建议 3-5 个一批）；随后用 `mastergo design-svgs <url>` 获取缓存 SVG HTML，用 `mastergo design-texts <url>` 获取精确文本。只有这些接口不可用或失败时，才退回 `mastergo dsl`
+- 用户说“解析设计稿 / 获取 DSL / 看结构”：如果是普通小稿，用 `mastergo dsl`，必要时再用 `mastergo analyze` 做人类可读摘要；如果用户强调 token 消耗、上下文太大、图标路径太多，给 `mastergo dsl` 增加 `--simplify`
 - 用户说“设计转代码 / D2C / 生成 Vue 或 HTML”：用 `mastergo d2c`，并传 `--d2c-url mastergo://getd2c/...`（或 `--content-id` + `--document-id`）和 `--out-dir`；代码文件、SVG、图片资源都应落盘，代码文件按接口返回自动保存为 `.vue` 或 `.html`；`contentId` 接受两种形态：① D2C 任务运行 ID（设计稿里点 D2C 后给的 `mastergo://getd2c/<id>`）；② 由 file 链接推导：`fileId` 加 DSL 展开的完整节点路径拼接（如 `<fileId>-<layerId>/<expandedNodeId>`）。如果 file 链接当前 `layer_id` 直接拼接返回 10009，不要说“这个链接获取不到”，也不要说“换成子层获取”；应先用 `mastergo dsl <file-link>` 获取当前入口的展开节点路径，再用 `fileId-完整节点路径` 继续尝试。CLI 会把文件名里的 `/` 替换为 `_`。
 - 用户说“代码同步到设计稿 / C2D”：用 `mastergo c2d`；可传 `--short-link`，但只把 URL 中的 `layer_id` 当作图层 ID，禁止把 `pageid/page_id` 当作 `layerId`
 - 用户说“完整网站 / 页面配置 / meta”：用 `mastergo meta`

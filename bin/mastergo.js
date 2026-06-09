@@ -37,6 +37,10 @@ async function main(argv) {
   }
 
   if (command === 'dsl' || command === 'get-dsl') return getDsl(args);
+  if (command === 'design-sections' || command === 'get-design-sections') return getDesignSections(args);
+  if (command === 'design-svgs' || command === 'get-design-svgs') return getDesignSvgs(args);
+  if (command === 'design-texts' || command === 'get-design-texts') return getDesignTexts(args);
+  if (command === 'extract-svg') return extractSvg(args);
   if (command === 'd2c') return getD2c(args);
   if (command === 'c2d') return postC2d(args);
   if (command === 'meta') return getMeta(args);
@@ -56,7 +60,11 @@ function printHelp() {
 
 Usage:
   mastergo analyze <mastergo-url> [--format tree|json|flat]
-  mastergo dsl|get-dsl <mastergo-url|fileId layerId> [--source-layer-id ID] [--rule RULE] [--no-rule]
+  mastergo dsl|get-dsl <mastergo-url|fileId layerId> [--source-layer-id ID] [--rule RULE] [--no-rule] [--simplify]
+  mastergo design-sections <mastergo-url|fileId layerId> [--source-layer-id ID] [--section-index N]
+  mastergo design-svgs <mastergo-url|fileId layerId> [--source-layer-id ID]
+  mastergo design-texts <mastergo-url|fileId layerId> [--source-layer-id ID]
+  mastergo extract-svg <mastergo-url|fileId layerId> [--background-color #fff]
   mastergo d2c (--d2c-url mastergo://getd2c/<contentId> | --content-id ID --document-id ID) [--out-dir DIR]
   mastergo c2d --file HTML (--short-link URL | --file-id ID [--layer-id ID])
   mastergo meta --file-id ID --layer-id ID [--source-layer-id ID]
@@ -81,11 +89,54 @@ async function getDsl(args) {
     layerId: ids.layerId,
     sourceLayerId: ids.sourceLayerId,
   }, options);
+  const dsl = options.simplify ? simplifyDsl(response) : response;
   printJson({
-    dsl: response,
-    componentDocumentLinks: extractComponentDocumentLinks(response),
+    dsl,
+    componentDocumentLinks: extractComponentDocumentLinks(dsl),
     rules: options['no-rule'] ? [] : buildDslRules(options),
   });
+}
+
+async function getDesignSections(args) {
+  const { options, positionals } = parseFlags(args);
+  const ids = await resolveDesignIds({ options, positionals, requireLayerId: true });
+  const result = await requestJson('/mcp/design-sections', {
+    fileId: normalizeFileId(ids.fileId),
+    layerId: ids.sourceLayerId || ids.layerId,
+    sectionIndex: options['section-index'],
+  }, options, 'GET', undefined, { timeoutMs: 120000 });
+  printJson({ result, rules: buildDesignSectionsRules() });
+}
+
+async function getDesignSvgs(args) {
+  const { options, positionals } = parseFlags(args);
+  const ids = await resolveDesignIds({ options, positionals, requireLayerId: true });
+  const result = await requestJson('/mcp/design-svgs', {
+    fileId: normalizeFileId(ids.fileId),
+    layerId: ids.sourceLayerId || ids.layerId,
+  }, options, 'GET', undefined, { timeoutMs: 120000 });
+  printJson({ result });
+}
+
+async function getDesignTexts(args) {
+  const { options, positionals } = parseFlags(args);
+  const ids = await resolveDesignIds({ options, positionals, requireLayerId: true });
+  const result = await requestJson('/mcp/design-texts', {
+    fileId: normalizeFileId(ids.fileId),
+    layerId: ids.sourceLayerId || ids.layerId,
+  }, options, 'GET', undefined, { timeoutMs: 120000 });
+  printJson({ result });
+}
+
+async function extractSvg(args) {
+  const { options, positionals } = parseFlags(args);
+  const ids = await resolveDesignIds({ options, positionals, requireLayerId: true });
+  const result = await requestJson('/mcp/extract-svg', {
+    fileId: normalizeFileId(ids.fileId),
+    layerId: ids.layerId,
+    backgroundColor: options['background-color'],
+  }, options);
+  printJson({ result });
 }
 
 async function getD2c(args) {
@@ -191,13 +242,13 @@ async function getComponentWorkflow(args) {
   });
 }
 
-async function requestJson(path, params, options, method = 'GET', body) {
+async function requestJson(path, params, options, method = 'GET', body, requestOptions = {}) {
   const url = new URL(path, getBaseUrl(options));
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== '') url.searchParams.set(key, value);
   });
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), requestOptions.timeoutMs || 30000);
   try {
     const response = await fetch(url, {
       method,
@@ -207,9 +258,7 @@ async function requestJson(path, params, options, method = 'GET', body) {
     });
     const text = await response.text();
     if (!response.ok) {
-      const hint = path === '/mcp/d2c/events' && response.status === 404
-        ? '提示：D2C contentId 是 D2C 任务运行 ID（形如 mastergo://getd2c/<contentId>），不是 fileId-layerId；请用 --d2c-url 或提供真实 contentId。'
-        : '';
+      const hint = buildRequestHint(path, response.status);
       throw new Error(hint ? `${text}\n${hint}` : (text || `请求失败: ${response.status} ${response.statusText}`));
     }
     try { return JSON.parse(text); } catch { return text; }
@@ -244,7 +293,7 @@ function parseFlags(args) {
       continue;
     }
     const [key, inlineValue] = arg.slice(2).split('=');
-    if (key === 'no-rule') {
+    if (key === 'no-rule' || key === 'simplify') {
       options[key] = true;
       continue;
     }
@@ -320,6 +369,66 @@ function extractComponentDocumentLinks(dsl) {
   return Array.from(documentLinks);
 }
 
+function simplifyDsl(dsl) {
+  const stats = { iconPlaceholders: 0, pathsRemoved: 0 };
+  const cloned = cloneJson(dsl);
+  if (Array.isArray(cloned?.nodes)) cloned.nodes = simplifyDslNodes(cloned.nodes, stats);
+  if (cloned?.root && typeof cloned.root === 'object') cloned.root = simplifyDslNode(cloned.root, stats);
+  if (cloned && typeof cloned === 'object') {
+    cloned._simplified = true;
+    cloned._simplificationStats = stats;
+  }
+  return cloned;
+}
+
+function simplifyDslNodes(nodes, stats) {
+  return nodes.map((node) => simplifyDslNode(node, stats));
+}
+
+function simplifyDslNode(node, stats) {
+  if (!node || typeof node !== 'object') return node;
+  if (isIconLikeNode(node)) return createIconPlaceholder(node, stats);
+  if (Array.isArray(node.children)) node.children = simplifyDslNodes(node.children, stats);
+  return node;
+}
+
+function isIconLikeNode(node) {
+  const type = String(node.type || '').toUpperCase();
+  const name = String(node.name || '').toLowerCase();
+  const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+  const iconTypes = new Set(['PATH', 'VECTOR', 'SVG_ELLIPSE', 'SVG_RECTANGLE']);
+  if (iconTypes.has(type)) return true;
+  if (Array.isArray(node.path) && node.path.length > 0) return true;
+  return !hasChildren && ['ic-', 'ic_', 'ico_', 'icon', '图标'].some((keyword) => name.includes(keyword));
+}
+
+function createIconPlaceholder(node, stats) {
+  stats.iconPlaceholders += 1;
+  if (Array.isArray(node.path)) stats.pathsRemoved += node.path.length;
+  const placeholder = pickDefined({
+    type: 'ICON_PLACEHOLDER',
+    id: node.id,
+    name: node.name || 'icon',
+    layout: node.layout,
+    layoutStyle: node.layoutStyle,
+    fill: node.fill,
+    strokeColor: node.strokeColor,
+    borderRadius: node.borderRadius,
+    componentInfo: node.componentInfo,
+    _originalType: node.type,
+    _isSimplified: true,
+  });
+  return placeholder;
+}
+
+function pickDefined(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
+}
+
+function cloneJson(value) {
+  return value === undefined ? value : JSON.parse(JSON.stringify(value));
+}
+
 function buildDslRules(options) {
   const envRules = parseJsonArray(process.env.RULES, 'RULES');
   const cliRules = Array.isArray(options.rule) ? options.rule : options.rule ? [options.rule] : [];
@@ -329,6 +438,26 @@ function buildDslRules(options) {
     ...envRules,
     ...cliRules,
   ];
+}
+
+function buildDesignSectionsRules() {
+  return [
+    'Use design-sections as the primary large-design workflow. Call it once without --section-index to get the section overview, then fetch every section by index before generating the final UI.',
+    'Fetch sections in small batches of 3-5 when orchestrating multiple CLI calls. Do not skip sections unless the user explicitly narrows the scope.',
+    'After sections are collected, call design-svgs for cached SVG HTML and design-texts for exact long text. Preserve text exactly instead of paraphrasing.',
+    'Use dsl|get-dsl only as a fallback when design-sections is unavailable or fails. Do not call both just to verify the same design.',
+    'Preserve backgrounds, fills, and tokens from the returned data. Do not invent missing visual details.',
+  ];
+}
+
+function buildRequestHint(path, status) {
+  if (path === '/mcp/d2c/events' && status === 404) {
+    return '提示：D2C contentId 是 D2C 任务运行 ID（形如 mastergo://getd2c/<contentId>），不是 fileId-layerId；请用 --d2c-url 或提供真实 contentId。';
+  }
+  if (status === 404 && ['/mcp/design-sections', '/mcp/design-svgs', '/mcp/design-texts'].includes(path)) {
+    return `提示：${path} 接口不可用，请确认后端 frontend-mcp-server 已更新到支持 design sections/svg/text 的版本。`;
+  }
+  return '';
 }
 
 function parseJsonArray(value, name) {
