@@ -4,11 +4,21 @@ description: MasterGo CLI 技能包。用于获取 MasterGo 设计 DSL、D2C 代
 triggers:
   - mastergo
   - MasterGo
+  - mastergo-cli
   - 设计稿
+  - 设计转代码
+  - 代码同步设计稿
+  - 解析设计稿
+  - 组件开发工作流
+  - MasterGo file 链接
+  - MasterGo goto 链接
+  - mastergo://getd2c/
   - DSL
   - D2C
   - C2D
   - Generator
+  - 组件文档
+  - 站点元信息
 argument-hint: "[mastergo-url|command]"
 ---
 

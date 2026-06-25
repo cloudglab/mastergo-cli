@@ -143,3 +143,4 @@ __pycache__
 # Local agent/tool indexes
 .codegraph/
 .cursor/
+.codex/

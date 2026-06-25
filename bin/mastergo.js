@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const packageName = '@cloudglab/mastergo-cli';
 const packageVersion = '0.1.0';
@@ -32,7 +32,12 @@ async function main(argv) {
   }
 
   if (command === 'install' || command === 'update') {
-    await installSkill(args);
+    await installSkill(args, command);
+    return;
+  }
+
+  if (command === 'uninstall') {
+    await uninstallSkill(args);
     return;
   }
 
@@ -66,19 +71,22 @@ Usage:
   mastergo design-texts <mastergo-url|fileId layerId> [--source-layer-id ID]
   mastergo extract-svg <mastergo-url|fileId layerId> [--background-color #fff]
   mastergo d2c (--d2c-url mastergo://getd2c/<contentId> | --content-id ID --document-id ID) [--out-dir DIR]
-  mastergo c2d --file HTML (--short-link URL | --file-id ID [--layer-id ID])
+  mastergo c2d --file HTML (--short-link URL | --file-id ID [--layer-id ID]) [--confirm true]
   mastergo meta --file-id ID --layer-id ID [--source-layer-id ID]
   mastergo component-doc <url>
   mastergo component-workflow --root PATH --file-id ID --layer-id ID [--source-layer-id ID]
   mastergo fetch-docs <url...>
-  mastergo install [--skill-source git|npm] [--skill-local-path <path>]
-  mastergo update [--skill-source git|npm] [--skill-local-path <path>]
+  mastergo install [--skill-source git|npm] [--skill-local-path <path>] [--cli-only] [--skill-only]
+  mastergo update [--skill-source git|npm] [--skill-local-path <path>] [--cli-only] [--skill-only]
+  mastergo uninstall [--cli-only] [--skill-only] [--confirm true]
   mastergo version
 
 Environment:
   MASTERGO_TOKEN / MASTERGO_API_TOKEN / MG_MCP_TOKEN     API token
   MASTERGO_ENDPOINT / API_BASE_URL                      API base URL
-  RULES                                                 JSON array of extra DSL rules`);
+  MASTERGO_DISABLE_WRITE=true                            Disable all write commands (c2d)
+  RULES                                                 JSON array of extra DSL rules
+`);
 }
 
 async function getDsl(args) {
@@ -163,6 +171,31 @@ async function postC2d(args) {
   const filePath = resolve(requireOption(options, 'file'));
   const ids = await resolveDesignIds({ options, positionals, requireLayerId: false });
   if (!ids.fileId) throw new Error('请传 --short-link，或至少传 --file-id（--layer-id 可选）');
+
+  // 写保护：参考 design.md §7.2。先检查 DISABLE_WRITE，再检查 confirm。
+  if (process.env.MASTERGO_DISABLE_WRITE === 'true') {
+    printJson({
+      ok: false,
+      supported: false,
+      reason: '写操作已被 MASTERGO_DISABLE_WRITE 禁用。',
+    });
+    return;
+  }
+  if (!parseConfirm(options.confirm)) {
+    printJson({
+      ok: false,
+      preview: true,
+      reason: '写操作缺少确认。若要执行 c2d，需要传入 confirm: true。',
+      action: 'c2d',
+      payload: {
+        fileId: normalizeFileId(ids.fileId),
+        layerId: ids.layerId || undefined,
+        file: filePath,
+      },
+    });
+    return;
+  }
+
   const data = readFileSync(filePath, 'utf8');
   const result = await requestJson('/mcp/c2d', {}, options, 'POST', {
     data,
@@ -170,6 +203,12 @@ async function postC2d(args) {
     layerId: ids.layerId || undefined,
   });
   printJson(result);
+}
+
+function parseConfirm(value) {
+  if (value === undefined || value === null) return false;
+  const text = String(value).trim().toLowerCase();
+  return text === 'true' || text === '1' || text === 'yes';
 }
 
 async function getMeta(args) {
@@ -642,12 +681,56 @@ function printJson(data) {
   console.log(typeof data === 'string' ? data : JSON.stringify(data, null, 2));
 }
 
-async function installSkill(args) {
+async function installSkill(args, kind) {
   const { options } = parseFlags(args);
   const source = options['skill-source'] || 'git';
   if (source !== 'git' && source !== 'npm') throw new Error('--skill-source 只支持 git 或 npm');
-  const target = options['skill-local-path'] ? resolve(options['skill-local-path']) : source === 'npm' ? rootDir : gitSkillSource;
-  await run('npx', ['-y', 'skills', 'add', '-g', target]);
+  const skillOnly = parseFlagTrue(options['skill-only']);
+  const cliOnly = parseFlagTrue(options['cli-only']);
+
+  if (!skillOnly) {
+    if (kind === 'update') {
+      await run('npm', ['install', '-g', `${packageName}@latest`]);
+    } else {
+      await run('npm', ['install', '-g', packageName]);
+    }
+  }
+
+  if (!cliOnly) {
+    const target = options['skill-local-path']
+      ? resolve(options['skill-local-path'])
+      : source === 'npm' ? rootDir : gitSkillSource;
+    await run('npx', ['-y', 'skills', 'add', '-g', target]);
+  }
+}
+
+async function uninstallSkill(args) {
+  const { options } = parseFlags(args);
+  const skillOnly = parseFlagTrue(options['skill-only']);
+  const cliOnly = parseFlagTrue(options['cli-only']);
+  if (!parseConfirm(options.confirm)) {
+    printJson({
+      ok: false,
+      preview: true,
+      reason: '卸载是破坏性操作，未传 --confirm=true；如要执行 uninstall，请显式确认。',
+      action: 'uninstall',
+      payload: { skillOnly, cliOnly },
+    });
+    return;
+  }
+
+  if (!skillOnly) {
+    await run('npx', ['-y', 'skills', 'remove', 'mastergo-cli', '--yes']);
+  }
+  if (!cliOnly) {
+    await run('npm', ['uninstall', '-g', packageName]);
+  }
+}
+
+function parseFlagTrue(value) {
+  if (value === undefined || value === null) return false;
+  const text = String(value).trim().toLowerCase();
+  return text === 'true' || text === '1' || text === 'yes';
 }
 
 async function runPython(scriptPath, args) {
@@ -676,8 +759,25 @@ function run(command, args) {
   });
 }
 
-main(process.argv.slice(2)).catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(message);
-  process.exit(1);
-});
+// 仅在作为 CLI 主入口运行时执行 main()；被测试文件 import 时不会触发 CLI 启动。
+const isMain = process.argv[1]
+  && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+if (isMain) {
+  main(process.argv.slice(2)).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    process.exit(1);
+  });
+}
+
+// 导出供单测使用的纯函数；不影响 CLI 运行。
+export {
+  parseFlags,
+  extractIdsFromUrl,
+  simplifyDsl,
+  simplifyDslNode,
+  simplifyDslNodes,
+  isIconLikeNode,
+  normalizeFileId,
+  cloneJson,
+};
