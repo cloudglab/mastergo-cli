@@ -6,46 +6,45 @@ Build complete websites from MasterGo designs with multiple pages.
 
 ### 1. Analyze Entry Page
 
+Use the section-first workflow for the entry page:
+
 ```bash
-python {SKILL_DIR}/scripts/mastergo_analyze.py "https://mastergo.com/goto/xxx"
+mastergo design-sections "https://mastergo.com/goto/xxx"
 ```
 
 Look for:
-- Navigation targets in output
+- Section count and page boundaries
+- `interactive` navigation targets
 - Page structure and components
 
-### 2. Get Full DSL
+### 2. Fetch All Sections
+
+Fetch every section in batches of 3-5:
 
 ```bash
-python {SKILL_DIR}/scripts/mastergo_get_dsl.py "https://mastergo.com/goto/xxx"
+mastergo design-sections "https://mastergo.com/goto/xxx" --section-index 0
+mastergo design-sections "https://mastergo.com/goto/xxx" --section-index 1
 ```
 
-### 3. Extract Navigation Targets
+### 3. Complete Visual Fidelity
 
-From the DSL, find all `interactive` fields with `type: navigation`:
-
-```python
-# In DSL response, navigations look like:
-{
-    "interactive": [{
-        "type": "navigation",
-        "targetLayerId": "0:3"  # This is another page
-    }]
-}
-```
-
-### 4. Fetch Each Page
-
-For each `targetLayerId`, construct URL and fetch:
+After all sections are fetched, get both SVG and text data:
 
 ```bash
-# Same fileId, different layerId
-python {SKILL_DIR}/scripts/mastergo_get_dsl.py \
-    --file-id 155675508499265 \
-    --layer-id "0:3"
+mastergo design-svgs "https://mastergo.com/goto/xxx"
+mastergo design-texts "https://mastergo.com/goto/xxx"
 ```
 
-### 5. Build Page Graph
+### 4. Extract Navigation Targets
+
+From the section data, find all `interactive` fields with `type: navigation`.
+Each `targetLayerId` points to another page.
+
+### 5. Fetch Each Page
+
+For each `targetLayerId`, repeat the same section-first workflow.
+
+### 6. Build Page Graph
 
 ```
 Entry (0:1)
@@ -62,32 +61,3 @@ Track visited layerIds to avoid cycles.
 1. **Shared components first**: header, footer, navigation
 2. **Entry page**: main landing page
 3. **Sub-pages**: in dependency order or parallel
-
-## Extracting Navigations (Code Pattern)
-
-```python
-def extract_navigations(dsl):
-    """Extract all navigation targets from DSL."""
-    navs = []
-    
-    def traverse(node):
-        if not node:
-            return
-        for action in node.get('interactive', []):
-            if action.get('type') == 'navigation':
-                navs.append({
-                    'sourceId': node.get('id'),
-                    'sourceName': node.get('name'),
-                    'targetLayerId': action.get('targetLayerId')
-                })
-        for child in node.get('children', []):
-            traverse(child)
-    
-    dsl_root = dsl.get('dsl', dsl)
-    for node in dsl_root.get('nodes', []):
-        traverse(node)
-    if dsl_root.get('root'):
-        traverse(dsl_root['root'])
-    
-    return navs
-```

@@ -111,6 +111,8 @@ mastergo fetch-docs "https://example.com/button.mdx"
 
 ## 使用规则
 
+- 用户说“还原设计稿 / Restore design / 还原设计稿，保存为 html 文件”：把它当作完整页面高保真实现请求。优先执行 `mastergo design-sections <url>` 获取概览并按 `--section-index` 拉取所有 section，再执行 `mastergo design-svgs <url>` 和 `mastergo design-texts <url>`，最后在用户项目中保存 HTML 和必要资源；如果用户提供的是 `mastergo://getd2c/...` 或明确要求 D2C，则改用 `mastergo d2c --out-dir <dir>` 落盘 Vue/HTML 和资源
+- 用户说“提取 SVG，放到 html 中预览 / Extract SVG and preview in HTML”：优先用 `mastergo extract-svg <url>` 获取目标图层 SVG，必要时用 `mastergo design-svgs <url>` 获取缓存 SVG HTML，并保存一个本地 HTML 预览文件
 - 用户说“完整页面 / 大设计稿 / 高保真实现 / section”：优先用 `mastergo design-sections <url>` 获取 section 概览，再按 `--section-index` 获取所有 section（建议 3-5 个一批）；随后用 `mastergo design-svgs <url>` 获取缓存 SVG HTML，用 `mastergo design-texts <url>` 获取精确文本。只有这些接口不可用或失败时，才退回 `mastergo dsl`
 - 用户说“解析设计稿 / 获取 DSL / 看结构”：如果是普通小稿，用 `mastergo dsl`，必要时再用 `mastergo analyze` 做人类可读摘要；如果用户强调 token 消耗、上下文太大、图标路径太多，给 `mastergo dsl` 增加 `--simplify`
 - 用户说“设计转代码 / D2C / 生成 Vue 或 HTML”：用 `mastergo d2c`，并传 `--d2c-url mastergo://getd2c/...`（或 `--content-id` + `--document-id`）和 `--out-dir`；代码文件、SVG、图片资源都应落盘，代码文件按接口返回自动保存为 `.vue` 或 `.html`；`contentId` 接受两种形态：① D2C 任务运行 ID（设计稿里点 D2C 后给的 `mastergo://getd2c/<id>`）；② 由 file 链接推导：`fileId` 加 DSL 展开的完整节点路径拼接（如 `<fileId>-<layerId>/<expandedNodeId>`）。如果 file 链接当前 `layer_id` 直接拼接返回 10009，不要说“这个链接获取不到”，也不要说“换成子层获取”；应先用 `mastergo dsl <file-link>` 获取当前入口的展开节点路径，再用 `fileId-完整节点路径` 继续尝试。CLI 会把文件名里的 `/` 替换为 `_`。

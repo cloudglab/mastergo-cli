@@ -87,15 +87,70 @@ npx -y @cloudglab/mastergo-cli@latest dsl "https://mastergo.com/goto/LhGgBAK"
 export MASTERGO_TOKEN="mg_your_token_here"
 export API_BASE_URL="https://mastergo.com"
 
+# 可选代理
+export HTTPS_PROXY="http://127.0.0.1:7890"
+
 # 兼容旧版 Python 辅助脚本
 export MASTERGO_ENDPOINT="https://mastergo.com"
 ```
 
 不要在日志或终端输出里打印 token 值。
 
+## MCP 配置示例
+
+### OpenCode 本地 MCP
+
+```json
+{
+  "mcp": {
+    "mastergo-magic-mcp": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@mastergo/magic-mcp",
+        "--token=<YOUR_TOKEN>",
+        "--url=https://mastergo.com"
+      ],
+      "enabled": true,
+      "environment": {
+        "NPM_CONFIG_REGISTRY": "https://registry.npmjs.org/",
+        "HTTPS_PROXY": "http://127.0.0.1:7890"
+      }
+    }
+  }
+}
+```
+
+### Cursor SSE MCP
+
+```json
+{
+  "mcpServers": {
+    "mastergo-magic-mcp": {
+      "url": "https://mastergo.com/mcp/xf/sse",
+      "headers": {
+        "x-mg-useraccesstoken": "<YOUR_TOKEN>"
+      },
+      "env": {
+        "HTTPS_PROXY": "http://127.0.0.1:7890"
+      }
+    }
+  }
+}
+```
+
 ## 可以这样描述场景
 
 下面这些话可以交给 AI Skill / Agent 转成对应的 `mastergo-cli` 命令。
+
+### 官方上游示例提示词
+
+- 提取 SVG，放到 html 中预览：`https://{domain}/file/{fileId}?layer_id={layerId}`
+- 还原设计稿：`https://{domain}/file/{fileId}?layer_id={layerId}`
+- 还原设计稿：`https://{domain}/goto/{shortLink}`
+- 还原设计稿，保存为 html 文件：`https://{domain}/file/{fileId}?layer_id={layerId}`
+- 还原设计稿，保存为 html 文件：`https://{domain}/goto/{shortLink}`
 
 ### 设计 DSL 和结构
 
@@ -138,6 +193,7 @@ export MASTERGO_ENDPOINT="https://mastergo.com"
 # DSL 和人类可读摘要
 mastergo dsl "https://mastergo.com/goto/LhGgBAK"
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --source-layer-id 1:24
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" --proxy http://127.0.0.1:7890
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --simplify
 mastergo analyze "https://mastergo.com/goto/LhGgBAK"
 mastergo analyze "https://mastergo.com/goto/LhGgBAK" --format json

@@ -4,7 +4,7 @@ Practical guide for working with MasterGo DSL. For complete types, see [dsl-type
 
 ## Understanding Script Output
 
-### mastergo_analyze.py Output
+### `mastergo analyze` Output
 
 ```
 DSL Analysis (v1.0.0, REACT)
@@ -32,7 +32,7 @@ Navigations:
   Menu (1:15) → 0:2
 ```
 
-### mastergo_get_dsl.py Output
+### `mastergo dsl` Output
 
 ```json
 {

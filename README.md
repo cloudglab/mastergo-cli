@@ -85,15 +85,70 @@ npx -y @cloudglab/mastergo-cli@latest dsl "https://mastergo.com/goto/LhGgBAK"
 export MASTERGO_TOKEN="mg_your_token_here"
 export API_BASE_URL="https://mastergo.com"
 
+# Optional proxy
+export HTTPS_PROXY="http://127.0.0.1:7890"
+
 # Legacy Python helper compatibility
 export MASTERGO_ENDPOINT="https://mastergo.com"
 ```
 
 Do not print token values in logs or terminal output.
 
+## MCP configuration examples
+
+### OpenCode local MCP
+
+```json
+{
+  "mcp": {
+    "mastergo-magic-mcp": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@mastergo/magic-mcp",
+        "--token=<YOUR_TOKEN>",
+        "--url=https://mastergo.com"
+      ],
+      "enabled": true,
+      "environment": {
+        "NPM_CONFIG_REGISTRY": "https://registry.npmjs.org/",
+        "HTTPS_PROXY": "http://127.0.0.1:7890"
+      }
+    }
+  }
+}
+```
+
+### Cursor SSE MCP
+
+```json
+{
+  "mcpServers": {
+    "mastergo-magic-mcp": {
+      "url": "https://mastergo.com/mcp/xf/sse",
+      "headers": {
+        "x-mg-useraccesstoken": "<YOUR_TOKEN>"
+      },
+      "env": {
+        "HTTPS_PROXY": "http://127.0.0.1:7890"
+      }
+    }
+  }
+}
+```
+
 ## Scenario prompts
 
 These prompts can be handed to an AI Skill / Agent and mapped to `mastergo-cli` commands.
+
+### Official upstream examples
+
+- Extract SVG and preview in HTML: `https://{domain}/file/{fileId}?layer_id={layerId}`
+- Restore design: `https://{domain}/file/{fileId}?layer_id={layerId}`
+- Restore design: `https://{domain}/goto/{shortLink}`
+- Restore design, save as HTML file: `https://{domain}/file/{fileId}?layer_id={layerId}`
+- Restore design, save as HTML file: `https://{domain}/goto/{shortLink}`
 
 ### Design DSL and structure
 
@@ -136,6 +191,7 @@ These prompts can be handed to an AI Skill / Agent and mapped to `mastergo-cli` 
 # DSL and readable summaries
 mastergo dsl "https://mastergo.com/goto/LhGgBAK"
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --source-layer-id 1:24
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" --proxy http://127.0.0.1:7890
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --simplify
 mastergo analyze "https://mastergo.com/goto/LhGgBAK"
 mastergo analyze "https://mastergo.com/goto/LhGgBAK" --format json

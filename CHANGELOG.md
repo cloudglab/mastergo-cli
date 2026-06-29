@@ -21,6 +21,12 @@ All notable changes to this project will be documented in this file.
 - `npm run test` 通过：内置 `node --test tests/*.test.js` 跑通 24 个用例（`parseFlags` 10 例、`extractIdsFromUrl` 5 例、`simplifyDsl` / `isIconLikeNode` 9 例），全部 ok / fail=0。
 - `mastergo help` 仍输出完整命令清单；新增 `uninstall` 条目、`c2d --confirm true` 提示和 `MASTERGO_DISABLE_WRITE` 环境变量说明。
 - 写保护 review：`MASTERGO_DISABLE_WRITE=true` 与缺 `--confirm` 的两条分支都在 `postC2d` 入口拦截，不进入 `requestJson('/mcp/c2d', ...)` 链路；preview / disabled 两条路径分别返回约定的 JSON 结构。
+## 1.0.0 - 2026-06-29
+
+- Added optional `mastergo dsl --simplify` output that converts icon-like vector/path nodes to `ICON_PLACEHOLDER` to reduce token consumption.
+- Added `mastergo design-sections`, `mastergo design-svgs`, `mastergo design-texts`, and `mastergo extract-svg` commands for the section-first large-design workflow from upstream PR #87.
+- Added proxy-aware HTTP fetching for CLI requests and `--proxy` / `HTTPS_PROXY` support, matching upstream `@mastergo/magic-mcp@0.1.8+` behavior.
+- Synced upstream changes through `mastergo-design/mastergo-magic-mcp@189a1d0`, including Windows-safe layer image filenames, npm metadata, local tool ignore entries, section-first restoration rules, and meta workflow updates.
 
 ## 0.1.0 - 2026-06-07
 

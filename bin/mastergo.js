@@ -6,12 +6,14 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const packageName = '@cloudglab/mastergo-cli';
-const packageVersion = '0.1.0';
+const packageVersion = '1.0.0';
 const gitSkillSource = 'cloudglab/mastergo-cli';
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const skillDir = resolve(rootDir, 'skills', 'mastergo-cli');
 const scriptsDir = resolve(skillDir, 'scripts');
 const referencesDir = resolve(skillDir, 'references');
+let proxyDispatcher;
+let proxyDispatcherUrl;
 
 const legacyCommands = new Map([
   ['analyze', 'mastergo_analyze.py'],
@@ -65,7 +67,7 @@ function printHelp() {
 
 Usage:
   mastergo analyze <mastergo-url> [--format tree|json|flat]
-  mastergo dsl|get-dsl <mastergo-url|fileId layerId> [--source-layer-id ID] [--rule RULE] [--no-rule] [--simplify]
+  mastergo dsl|get-dsl <mastergo-url|fileId layerId> [--source-layer-id ID] [--rule RULE] [--proxy URL] [--no-rule] [--simplify]
   mastergo design-sections <mastergo-url|fileId layerId> [--source-layer-id ID] [--section-index N]
   mastergo design-svgs <mastergo-url|fileId layerId> [--source-layer-id ID]
   mastergo design-texts <mastergo-url|fileId layerId> [--source-layer-id ID]
@@ -85,6 +87,7 @@ Environment:
   MASTERGO_TOKEN / MASTERGO_API_TOKEN / MG_MCP_TOKEN     API token
   MASTERGO_ENDPOINT / API_BASE_URL                      API base URL
   MASTERGO_DISABLE_WRITE=true                            Disable all write commands (c2d)
+  HTTPS_PROXY / https_proxy / HTTP_PROXY / http_proxy   HTTP(S) proxy URL
   RULES                                                 JSON array of extra DSL rules
 `);
 }
@@ -222,10 +225,10 @@ async function getMeta(args) {
 }
 
 async function getComponentDoc(args) {
-  const { positionals } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
   const [url] = positionals;
   if (!url) throw new Error('component-doc 需要传入文档 URL');
-  const response = await fetch(url, { headers: authHeaders({}, false) });
+  const response = await fetchWithProxy(url, { headers: authHeaders({}, false) }, options);
   if (!response.ok) {
     printJson({ error: 'Failed to get component documentation', message: `${response.status} ${response.statusText}` });
     return;
@@ -252,7 +255,7 @@ async function getComponentWorkflow(args) {
   walkLayer(component, (layer) => {
     if (!Array.isArray(layer.path) || layer.path.length === 0) return;
     layer.imageUrls = [];
-    const id = String(layer.id || 'layer').replaceAll('/', '&');
+    const id = String(layer.id || 'layer').replaceAll('/', '&').replaceAll(':', '_');
     layer.path.forEach((svgPath, index) => {
       const filePath = resolve(imageDir, `${id}-${index}.svg`);
       if (!existsSync(filePath)) {
@@ -289,12 +292,12 @@ async function requestJson(path, params, options, method = 'GET', body, requestO
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), requestOptions.timeoutMs || 30000);
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithProxy(url, {
       method,
       headers: authHeaders(options),
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
-    });
+    }, options);
     const text = await response.text();
     if (!response.ok) {
       const hint = buildRequestHint(path, response.status);
@@ -304,6 +307,25 @@ async function requestJson(path, params, options, method = 'GET', body, requestO
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchWithProxy(input, init = {}, options = {}) {
+  const proxyUrl = getProxyUrl(options);
+  if (!proxyUrl) return fetch(input, init);
+  const dispatcher = await getProxyDispatcher(proxyUrl);
+  return fetch(input, { ...init, dispatcher });
+}
+
+function getProxyUrl(options = {}) {
+  return options.proxy || process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || '';
+}
+
+async function getProxyDispatcher(proxyUrl) {
+  if (proxyDispatcher && proxyDispatcherUrl === proxyUrl) return proxyDispatcher;
+  const { ProxyAgent } = await import('undici');
+  proxyDispatcher = new ProxyAgent(proxyUrl);
+  proxyDispatcherUrl = proxyUrl;
+  return proxyDispatcher;
 }
 
 function authHeaders(options, requireToken = true) {
@@ -357,12 +379,12 @@ function requireOption(options, key) {
 async function resolveDesignIds({ options, positionals, requireLayerId }) {
   const shortLink = options['short-link'] || options.shortLink;
   if (shortLink) {
-    return extractIdsFromUrl(shortLink, { requireLayerId });
+    return extractIdsFromUrl(shortLink, { requireLayerId, options });
   }
 
   const maybeUrl = positionals.find((value) => /^https?:\/\//.test(value));
   if (maybeUrl) {
-    return extractIdsFromUrl(maybeUrl, { requireLayerId });
+    return extractIdsFromUrl(maybeUrl, { requireLayerId, options });
   }
 
   const fileId = options['file-id'] || options.fileId || positionals[0];
@@ -374,10 +396,10 @@ async function resolveDesignIds({ options, positionals, requireLayerId }) {
   return { fileId, layerId, sourceLayerId };
 }
 
-async function extractIdsFromUrl(inputUrl, { requireLayerId }) {
+async function extractIdsFromUrl(inputUrl, { requireLayerId, options = {} }) {
   let targetUrl = inputUrl;
   if (inputUrl.includes('/goto/')) {
-    const response = await fetch(inputUrl, { redirect: 'manual' });
+    const response = await fetchWithProxy(inputUrl, { redirect: 'manual' }, options);
     const redirectUrl = response.headers.get('location');
     if (!redirectUrl) throw new Error('No redirect URL found for short link');
     targetUrl = new URL(redirectUrl, inputUrl).href;
@@ -472,7 +494,9 @@ function buildDslRules(options) {
   const envRules = parseJsonArray(process.env.RULES, 'RULES');
   const cliRules = Array.isArray(options.rule) ? options.rule : options.rule ? [options.rule] : [];
   return [
+    '[FALLBACK] Use dsl/get-dsl only when design-sections/get-design-sections is unavailable or returns an error. Prefer the section-by-section workflow for all designs.',
     'token filed must be generated as a variable (colors, shadows, fonts, etc.) and the token field must be displayed in the comment',
+    "Background colors come from the node's fillStyleId — look it up in the DSL styles map. Do NOT invent background gradients or colors. If a node has no fill style, leave its background transparent.",
     `componentDocumentLinks is a list of frontend component documentation links used in the DSL layer, designed to help you understand how to use the components.\nWhen it exists and is not empty, you need to use mastergo component-doc in a for loop to get the URL content of all components in the list, understand how to use the components, and generate code using the components.`,
     ...envRules,
     ...cliRules,
@@ -481,11 +505,20 @@ function buildDslRules(options) {
 
 function buildDesignSectionsRules() {
   return [
-    'Use design-sections as the primary large-design workflow. Call it once without --section-index to get the section overview, then fetch every section by index before generating the final UI.',
-    'Fetch sections in small batches of 3-5 when orchestrating multiple CLI calls. Do not skip sections unless the user explicitly narrows the scope.',
-    'After sections are collected, call design-svgs for cached SVG HTML and design-texts for exact long text. Preserve text exactly instead of paraphrasing.',
-    'Use dsl|get-dsl only as a fallback when design-sections is unavailable or fails. Do not call both just to verify the same design.',
-    'Preserve backgrounds, fills, and tokens from the returned data. Do not invent missing visual details.',
+    '## MasterGo Design DSL - Section-by-Section Workflow',
+    'Step 0: Get layout overview first. Call design-sections WITHOUT --section-index. The response contains sections with nodeCount, totalSections, totalNodes, and may include rootMetadata and splitContainers.',
+    "Use rootMetadata, when present, as the page frame's width, height, name, type, fill, and styles. Use splitContainers to understand split layout direction, item spacing, and padding.",
+    'Step 1: Fetch every section DSL. For i = 0 to totalSections-1, call design-sections with --section-index i. You MUST fetch all sections and must not skip section indexes.',
+    'Fetch section details in batches of 3-5 calls at a time. Do NOT request all sections simultaneously, because too many concurrent requests can time out.',
+    'Step 2: After all sections are fetched, call BOTH design-svgs and design-texts with the same fileId/layerId.',
+    'SVG data keys use S{sectionIndex}:{namedAncestor}|{ancestorId}. Match by S{sectionIndex}, insert the returned svgHtml directly, and do NOT construct your own SVG.',
+    'Text data keys use T{sectionIndex}|{nodeId}. Look up each key and insert the returned text verbatim. Do NOT paraphrase, translate, summarize, or invent text.',
+    'Step 3: Generate a single complete HTML file containing all sections in order. Token fields must become CSS variables with comments indicating the token name.',
+    'If componentDocumentLinks exists, call component-doc for every linked document before generating component code.',
+    'Tool selection: design-sections is the PRIMARY tool. dsl/get-dsl is a FALLBACK only when design-sections is unavailable or fails. Never call both design-sections and dsl/extract-svg just to verify the same design.',
+    'Text fidelity: render all nodes, including every tab, button, and text element. Do not duplicate text from one node to another.',
+    "Background and color: use the DSL styles map plus each node's fillStyleId/strokeStyleId. Do NOT invent gradients, colors, or decorations. Transparent/empty fills should remain transparent or inherit from parent.",
+    'Anti-hallucination: never fabricate SVG path data, icon shapes, backgrounds, gradients, or decorative details that are not present in the returned design data.',
   ];
 }
 
