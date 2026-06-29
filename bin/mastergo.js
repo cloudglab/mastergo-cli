@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promoteAgentFirstFields, summarizeList } from './list-summary.js';
 
 const packageName = '@cloudglab/mastergo-cli';
 const packageVersion = '1.0.0';
@@ -49,6 +50,7 @@ async function main(argv) {
   if (command === 'design-texts' || command === 'get-design-texts') return getDesignTexts(args);
   if (command === 'extract-svg') return extractSvg(args);
   if (command === 'd2c') return getD2c(args);
+  if (command === 'browser-d2c') return getBrowserD2c(args);
   if (command === 'c2d') return postC2d(args);
   if (command === 'meta') return getMeta(args);
   if (command === 'component-doc') return getComponentDoc(args);
@@ -67,14 +69,15 @@ function printHelp() {
 
 Usage:
   mastergo analyze <mastergo-url> [--format tree|json|flat]
-  mastergo dsl|get-dsl <mastergo-url|fileId layerId> [--source-layer-id ID] [--rule RULE] [--proxy URL] [--no-rule] [--simplify]
-  mastergo design-sections <mastergo-url|fileId layerId> [--source-layer-id ID] [--section-index N]
-  mastergo design-svgs <mastergo-url|fileId layerId> [--source-layer-id ID]
-  mastergo design-texts <mastergo-url|fileId layerId> [--source-layer-id ID]
-  mastergo extract-svg <mastergo-url|fileId layerId> [--background-color #fff]
+  mastergo dsl|get-dsl <mastergo-url|fileId layerId> [--source-layer-id ID] [--rule RULE] [--proxy URL] [--header "Key: Value"] [--format json|yaml|tree] [--no-rule] [--simplify]
+  mastergo design-sections <mastergo-url|fileId layerId> [--source-layer-id ID] [--section-index N] [--format json|yaml|tree]
+  mastergo design-svgs <mastergo-url|fileId layerId> [--source-layer-id ID] [--format json|yaml|tree]
+  mastergo design-texts <mastergo-url|fileId layerId> [--source-layer-id ID] [--format json|yaml|tree]
+  mastergo extract-svg <mastergo-url|fileId layerId> [--background-color #fff] [--format json|yaml|tree]
   mastergo d2c (--d2c-url mastergo://getd2c/<contentId> | --content-id ID --document-id ID) [--out-dir DIR]
+  mastergo browser-d2c [--page-url URL] [--page-id N] [--out-dir DIR] [--chrome-debug-url URL]
   mastergo c2d --file HTML (--short-link URL | --file-id ID [--layer-id ID]) [--confirm true]
-  mastergo meta --file-id ID --layer-id ID [--source-layer-id ID]
+  mastergo meta --file-id ID --layer-id ID [--source-layer-id ID] [--format json|yaml|tree]
   mastergo component-doc <url>
   mastergo component-workflow --root PATH --file-id ID --layer-id ID [--source-layer-id ID]
   mastergo fetch-docs <url...>
@@ -88,6 +91,8 @@ Environment:
   MASTERGO_ENDPOINT / API_BASE_URL                      API base URL
   MASTERGO_DISABLE_WRITE=true                            Disable all write commands (c2d)
   HTTPS_PROXY / https_proxy / HTTP_PROXY / http_proxy   HTTP(S) proxy URL
+  CHROME_DEBUG_URL                                       Chrome DevTools endpoint, default http://127.0.0.1:9222
+  DEFAULT_FORMAT                                         Default design-data format: json|yaml|tree
   RULES                                                 JSON array of extra DSL rules
 `);
 }
@@ -101,11 +106,11 @@ async function getDsl(args) {
     sourceLayerId: ids.sourceLayerId,
   }, options);
   const dsl = options.simplify ? simplifyDsl(response) : response;
-  printJson({
+  printData({
     dsl,
     componentDocumentLinks: extractComponentDocumentLinks(dsl),
     rules: options['no-rule'] ? [] : buildDslRules(options),
-  });
+  }, options.format);
 }
 
 async function getDesignSections(args) {
@@ -116,7 +121,7 @@ async function getDesignSections(args) {
     layerId: ids.sourceLayerId || ids.layerId,
     sectionIndex: options['section-index'],
   }, options, 'GET', undefined, { timeoutMs: 120000 });
-  printJson({ result, rules: buildDesignSectionsRules() });
+  printData(withProcessedListSummary({ result, rules: buildDesignSectionsRules() }, result?.sections || result), options.format);
 }
 
 async function getDesignSvgs(args) {
@@ -126,7 +131,7 @@ async function getDesignSvgs(args) {
     fileId: normalizeFileId(ids.fileId),
     layerId: ids.sourceLayerId || ids.layerId,
   }, options, 'GET', undefined, { timeoutMs: 120000 });
-  printJson({ result });
+  printData(withProcessedListSummary({ result }, result?.svgs || result), options.format);
 }
 
 async function getDesignTexts(args) {
@@ -136,7 +141,7 @@ async function getDesignTexts(args) {
     fileId: normalizeFileId(ids.fileId),
     layerId: ids.sourceLayerId || ids.layerId,
   }, options, 'GET', undefined, { timeoutMs: 120000 });
-  printJson({ result });
+  printData(withProcessedListSummary({ result }, result?.texts || result), options.format);
 }
 
 async function extractSvg(args) {
@@ -147,7 +152,7 @@ async function extractSvg(args) {
     layerId: ids.layerId,
     backgroundColor: options['background-color'],
   }, options);
-  printJson({ result });
+  printData({ result }, options.format);
 }
 
 async function getD2c(args) {
@@ -167,6 +172,73 @@ async function getD2c(args) {
     image: payload.image,
   });
   printJson({ result: data, files: saveResult });
+}
+
+async function getBrowserD2c(args) {
+  const { options } = parseFlags(args);
+  const pageUrl = options['page-url'] || options.pageUrl;
+  const pageId = options['page-id'] || options.pageId;
+  const outDir = options['out-dir'];
+  const debugUrl = options['chrome-debug-url'] || process.env.CHROME_DEBUG_URL || 'http://127.0.0.1:9222';
+  const page = await resolveChromePage({ debugUrl, pageUrl, pageId });
+  const evaluation = await chromeRuntimeEvaluate({
+    debugUrl,
+    page,
+    expression: `(() => {
+      if (!window.mg || !window.mg.codegen) {
+        return { ok: false, reason: '当前页面不存在 mg.codegen，无法走浏览器辅助 D2C。' };
+      }
+      const selection = window.mg.document?.currentPage?.selection || [];
+      if (!selection.length) {
+        return { ok: false, reason: '当前页面没有选中任何图层。' };
+      }
+      const node = selection[0];
+      return Promise.resolve(window.mg.codegen.getCode(node.id))
+        .then((result) => ({
+          ok: true,
+          pageTitle: document.title,
+          selection: { id: node.id, name: node.name, type: node.type, width: node.width, height: node.height },
+          result,
+        }))
+        .catch((error) => ({
+          ok: false,
+          reason: String(error),
+          selection: { id: node.id, name: node.name, type: node.type },
+        }));
+    })()`,
+  });
+
+  const payload = evaluation?.result?.value ?? evaluation?.result;
+  if (!payload?.ok) {
+    printJson({
+      ok: false,
+      source: 'browser-d2c',
+      page: { id: page.id, title: page.title, url: page.url },
+      selection: payload?.selection || null,
+      reason: payload?.reason || '浏览器辅助 D2C 失败。',
+    });
+    return;
+  }
+
+  const files = await saveBrowserD2c({
+    outDir,
+    selection: payload.selection,
+    codeResult: payload.result || {},
+  });
+
+  printJson({
+    ok: true,
+    source: 'browser-d2c',
+    page: { id: page.id, title: page.title, url: page.url },
+    selection: payload.selection,
+    files,
+    preview: {
+      fileName: payload.result?.fileName || '',
+      type: payload.result?.type || '',
+      importType: payload.result?.importType || '',
+      staticsCount: Array.isArray(payload.result?.statics) ? payload.result.statics.length : 0,
+    },
+  });
 }
 
 async function postC2d(args) {
@@ -221,7 +293,7 @@ async function getMeta(args) {
     layerId: requireOption(options, 'layer-id'),
     sourceLayerId: options['source-layer-id'],
   }, options);
-  printJson({ result, rules: readReference('meta.md') });
+  printData({ result, rules: readReference('meta.md') }, options.format);
 }
 
 async function getComponentDoc(args) {
@@ -335,6 +407,7 @@ function authHeaders(options, requireToken = true) {
     'Content-Type': 'application/json',
     Accept: 'application/json',
     ...(token ? { 'X-MG-UserAccessToken': token } : {}),
+    ...parseHeaderMap(options.header),
   };
 }
 
@@ -539,6 +612,270 @@ function parseJsonArray(value, name) {
   return parsed.map(String);
 }
 
+async function resolveChromePage({ debugUrl, pageUrl, pageId }) {
+  try {
+    const pages = await chromeJson(`${debugUrl}/json/list`);
+    if (pageId !== undefined && pageId !== null && pageId !== '') {
+      const index = Number(pageId);
+      if (!Number.isInteger(index) || index < 1 || index > pages.length) {
+        throw new Error(`--page-id 超出范围，当前共有 ${pages.length} 个页面`);
+      }
+      return normalizeChromePage(pages[index - 1], index);
+    }
+
+    if (pageUrl) {
+      const matched = pages.find((page) => String(page.url || '').includes(String(pageUrl)));
+      if (!matched) throw new Error(`未找到 URL 匹配 ${pageUrl} 的 Chrome 页面`);
+      return normalizeChromePage(matched, pages.indexOf(matched) + 1);
+    }
+
+    const filePage = pages.find((page) => String(page.url || '').includes('/file/'));
+    if (filePage) return normalizeChromePage(filePage, pages.indexOf(filePage) + 1);
+  } catch {
+    return resolveChromePageViaBrowserSocket({ debugUrl, pageUrl, pageId });
+  }
+
+  throw new Error('未找到可用的 MasterGo 页面。请传 --page-url 或 --page-id。');
+}
+
+function normalizeChromePage(page, index) {
+  return {
+    index,
+    id: page.id,
+    title: page.title || '',
+    url: page.url || '',
+    webSocketDebuggerUrl: page.webSocketDebuggerUrl || '',
+  };
+}
+
+async function chromeJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Chrome DevTools 请求失败: ${response.status} ${response.statusText}`);
+  return response.json();
+}
+
+async function chromeRuntimeEvaluate({ debugUrl, page, expression }) {
+  const version = await resolveChromeVersion(debugUrl);
+  if (page.targetId) {
+    return chromeBrowserSessionCommand(version.webSocketDebuggerUrl, page.targetId, 'Runtime.evaluate', {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+  }
+
+  const socketUrl = page.webSocketDebuggerUrl || version.webSocketDebuggerUrl;
+  if (!socketUrl) throw new Error('Chrome DevTools 未返回 webSocketDebuggerUrl');
+  const socket = new WebSocket(socketUrl);
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(() => {
+      try { socket.close(); } catch {}
+      rejectPromise(new Error('Chrome Runtime.evaluate 超时'));
+    }, 15000);
+
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({
+        id: 1,
+        method: 'Runtime.evaluate',
+        params: {
+          expression,
+          awaitPromise: true,
+          returnByValue: true,
+        },
+      }));
+    });
+
+    socket.addEventListener('message', (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.id !== 1) return;
+        clearTimeout(timer);
+        socket.close();
+        if (message.error) {
+          rejectPromise(new Error(message.error.message || 'Chrome Runtime.evaluate 失败'));
+          return;
+        }
+        if (message.result?.exceptionDetails) {
+          rejectPromise(new Error(message.result.exceptionDetails.text || 'Chrome Runtime.evaluate 抛异常'));
+          return;
+        }
+        resolvePromise(message.result);
+      } catch (error) {
+        clearTimeout(timer);
+        try { socket.close(); } catch {}
+        rejectPromise(error);
+      }
+    });
+
+    socket.addEventListener('error', () => {
+      clearTimeout(timer);
+      rejectPromise(new Error('Chrome DevTools WebSocket 连接失败'));
+    });
+  });
+}
+
+async function resolveChromeVersion(debugUrl) {
+  try {
+    return await chromeJson(`${debugUrl}/json/version`);
+  } catch (error) {
+    const wsUrl = await readChromeBrowserWebSocketUrl(debugUrl);
+    return { webSocketDebuggerUrl: wsUrl };
+  }
+}
+
+async function readChromeBrowserWebSocketUrl(debugUrl) {
+  const activePortPath = resolve(process.env.HOME || '', 'Library/Application Support/Google/Chrome/DevToolsActivePort');
+  if (!existsSync(activePortPath)) {
+    throw new Error(`Chrome DevTools 请求失败，且未找到 ${activePortPath}`);
+  }
+  const lines = readFileSync(activePortPath, 'utf8').split('\n').map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 2) {
+    throw new Error('Chrome DevTools ActivePort 内容不完整');
+  }
+  const browserPath = lines[1];
+  const base = new URL(debugUrl);
+  return `ws://${base.hostname}:${lines[0]}${browserPath}`;
+}
+
+async function resolveChromePageViaBrowserSocket({ debugUrl, pageUrl, pageId }) {
+  const browserSocketUrl = await readChromeBrowserWebSocketUrl(debugUrl);
+  const targets = await chromeBrowserCommand(browserSocketUrl, 'Target.getTargets', {});
+  const pages = (targets?.targetInfos || [])
+    .filter((target) => target.type === 'page')
+    .map((target, index) => ({
+      index: index + 1,
+      id: target.targetId,
+      targetId: target.targetId,
+      title: target.title || '',
+      url: target.url || '',
+      attached: target.attached,
+    }));
+
+  if (pageId !== undefined && pageId !== null && pageId !== '') {
+    const index = Number(pageId);
+    if (!Number.isInteger(index) || index < 1 || index > pages.length) {
+      throw new Error(`--page-id 超出范围，当前共有 ${pages.length} 个页面`);
+    }
+    return pages[index - 1];
+  }
+
+  if (pageUrl) {
+    const matched = pages.find((page) => String(page.url || '').includes(String(pageUrl)));
+    if (!matched) throw new Error(`未找到 URL 匹配 ${pageUrl} 的 Chrome 页面`);
+    return matched;
+  }
+
+  const filePage = pages.find((page) => String(page.url || '').includes('/file/'));
+  if (filePage) return filePage;
+  throw new Error('未找到可用的 MasterGo 页面。请传 --page-url 或 --page-id。');
+}
+
+async function chromeBrowserCommand(browserSocketUrl, method, params) {
+  const socket = new WebSocket(browserSocketUrl);
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(() => {
+      try { socket.close(); } catch {}
+      rejectPromise(new Error(`Chrome ${method} 超时`));
+    }, 15000);
+
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({ id: 1, method, params }));
+    });
+
+    socket.addEventListener('message', (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.id !== 1) return;
+        clearTimeout(timer);
+        socket.close();
+        if (message.error) {
+          rejectPromise(new Error(message.error.message || `Chrome ${method} 失败`));
+          return;
+        }
+        resolvePromise(message.result);
+      } catch (error) {
+        clearTimeout(timer);
+        try { socket.close(); } catch {}
+        rejectPromise(error);
+      }
+    });
+
+    socket.addEventListener('error', () => {
+      clearTimeout(timer);
+      rejectPromise(new Error(`Chrome ${method} websocket 连接失败`));
+    });
+  });
+}
+
+async function chromeBrowserSessionCommand(browserSocketUrl, targetId, method, params) {
+  const socket = new WebSocket(browserSocketUrl);
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(() => {
+      try { socket.close(); } catch {}
+      rejectPromise(new Error(`Chrome ${method} session 超时`));
+    }, 15000);
+
+    let sessionId = null;
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({
+        id: 1,
+        method: 'Target.attachToTarget',
+        params: { targetId, flatten: true },
+      }));
+    });
+
+    socket.addEventListener('message', (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.id === 1) {
+          if (message.error) {
+            clearTimeout(timer);
+            socket.close();
+            rejectPromise(new Error(message.error.message || 'Target.attachToTarget 失败'));
+            return;
+          }
+          sessionId = message.result?.sessionId;
+          socket.send(JSON.stringify({
+            id: 2,
+            sessionId,
+            method,
+            params,
+          }));
+          return;
+        }
+
+        if (message.id === 2) {
+          clearTimeout(timer);
+          const result = message.result;
+          if (sessionId) {
+            socket.send(JSON.stringify({
+              id: 3,
+              sessionId,
+              method: 'Target.detachFromTarget',
+              params: { sessionId },
+            }));
+          }
+          socket.close();
+          if (result?.exceptionDetails) {
+            rejectPromise(new Error(result.exceptionDetails.text || `${method} 抛异常`));
+            return;
+          }
+          resolvePromise(result);
+        }
+      } catch (error) {
+        clearTimeout(timer);
+        try { socket.close(); } catch {}
+        rejectPromise(error);
+      }
+    });
+
+    socket.addEventListener('error', () => {
+      clearTimeout(timer);
+      rejectPromise(new Error(`Chrome ${method} session websocket 连接失败`));
+    });
+  });
+}
+
 function extractD2cPayload(d2c) {
   const data = d2c?.data;
   const firstItem = Array.isArray(data) ? data[0] : undefined;
@@ -589,6 +926,29 @@ function detectD2cCodeExtension({ code, frameType }) {
   return '.html';
 }
 
+function detectBrowserCodeType(codeResult) {
+  const typeText = String(codeResult.type || '').toLowerCase();
+  const fileName = String(codeResult.fileName || '').toLowerCase();
+  const codeText = String(codeResult.code || '').trimStart().toLowerCase();
+  if (typeText.includes('vue')) return 'vue';
+  if (fileName.endsWith('.vue')) return 'vue';
+  if (codeText.startsWith('<template') || codeText.includes('<script setup') || codeText.includes('</template>')) return 'vue';
+  return 'html';
+}
+
+function sanitizeOutputName(name) {
+  return String(name || 'index')
+    .replace(/[/\\]/g, '_')
+    .replace(/^\.+/, '')
+    .replace(/^_+/, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function ensureOutputExtension(fileName, codeType) {
+  if (/\.[a-zA-Z0-9]+$/.test(fileName)) return fileName;
+  return `${fileName}.${codeType === 'vue' ? 'vue' : 'html'}`;
+}
+
 function parseResourcePath(resourcePath) {
   const map = { image: 'asset/images', svg: 'asset/icons' };
   if (!hasContent(resourcePath)) return map;
@@ -600,6 +960,37 @@ function parseResourcePath(resourcePath) {
     return map;
   }
   return map;
+}
+
+async function saveBrowserD2c({ outDir, selection, codeResult }) {
+  const targetDir = outDir ? resolve(outDir) : process.cwd();
+  if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
+
+  const codeType = detectBrowserCodeType(codeResult);
+  const suggestedName = codeResult.fileName || selection?.id || 'index';
+  const fileName = ensureOutputExtension(sanitizeOutputName(suggestedName), codeType);
+  const codePath = resolve(targetDir, fileName);
+  writeFileSync(codePath, String(codeResult.code || ''), 'utf8');
+
+  const staticDir = resolve(targetDir, 'static');
+  if (!existsSync(staticDir)) mkdirSync(staticDir, { recursive: true });
+
+  let staticCount = 0;
+  for (const item of Array.isArray(codeResult.statics) ? codeResult.statics : []) {
+    const candidateName = item.path ? item.path.split('/').pop() : item.componentName || `static_${staticCount + 1}.svg`;
+    const staticPath = resolve(staticDir, sanitizeOutputName(candidateName));
+    writeFileSync(staticPath, String(item.content || ''), 'utf8');
+    staticCount += 1;
+  }
+
+  return {
+    targetDir,
+    codeFileName: fileName,
+    codePath,
+    codeType,
+    staticDir,
+    staticCount,
+  };
 }
 
 async function writeResource(resData, targetDir, folderName, ext) {
@@ -711,7 +1102,329 @@ function readReference(fileName) {
 }
 
 function printJson(data) {
-  console.log(typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+  const value = promoteAgentFirstFields(data);
+  console.log(typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+}
+
+function printData(data, format) {
+  console.log(formatOutput(promoteAgentFirstFields(data), format));
+}
+
+function withProcessedListSummary(data, items) {
+  const list = normalizeListItems(items);
+  return promoteAgentFirstFields({
+    summary: summarizeList(list, buildListSummaryOptions(data, list)),
+    ...data,
+    meta: { ...(isPlainObject(data.meta) ? data.meta : {}), processed: true },
+  });
+}
+
+function buildListSummaryOptions(data, items) {
+  if (Array.isArray(data?.result?.sections) || Array.isArray(items)) {
+    return { sortKey: 'name', topN: 3, groupKey: 'type' };
+  }
+  if (Array.isArray(data?.result?.svgs) || Array.isArray(data?.result)) {
+    return { sortKey: 'name', topN: 3 };
+  }
+  if (isPlainObject(data?.result?.texts) || isPlainObject(data?.result)) {
+    return { sortKey: 'name', topN: 3 };
+  }
+  return { sortKey: 'name', topN: 3 };
+}
+
+function normalizeListItems(value) {
+  if (Array.isArray(value)) return value;
+  if (isPlainObject(value?.sections)) return Object.values(value.sections);
+  if (Array.isArray(value?.sections)) return value.sections;
+  if (Array.isArray(value?.svgs)) return value.svgs;
+  if (isPlainObject(value?.svgs)) return Object.entries(value.svgs).map(([id, item]) => ({ id, ...(isPlainObject(item) ? item : { value: item }) }));
+  if (Array.isArray(value?.texts)) return value.texts;
+  if (isPlainObject(value?.texts)) return Object.entries(value.texts).map(([id, item]) => ({ id, ...(isPlainObject(item) ? item : { value: item }) }));
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.list)) return value.list;
+  return isPlainObject(value) ? Object.values(value) : [];
+}
+
+const FORMAT_VALUES = new Set(['json', 'yaml', 'tree']);
+
+function normalizeFormat(format) {
+  if (typeof format !== 'string') return null;
+  const value = format.trim().toLowerCase();
+  return FORMAT_VALUES.has(value) ? value : null;
+}
+
+function resolveFormat(format) {
+  return normalizeFormat(format) || normalizeFormat(process.env.DEFAULT_FORMAT) || 'json';
+}
+
+function formatOutput(data, format) {
+  const resolved = resolveFormat(format);
+  if (resolved === 'yaml') return toYaml(data);
+  if (resolved === 'tree') return toTree(data);
+  return JSON.stringify(data);
+}
+
+function toYaml(data) {
+  return renderYaml(data, 0);
+}
+
+function renderYaml(value, depth) {
+  const pad = '  '.repeat(depth);
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]';
+    return value
+      .map((item) => {
+        if (isPlainObject(item) || Array.isArray(item)) {
+          return `${pad}-\n${indent(renderYaml(item, depth + 1), depth + 1)}`;
+        }
+        return `${pad}- ${renderYaml(item, 0)}`;
+      })
+      .join('\n');
+  }
+  if (isPlainObject(value)) {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return '{}';
+    return entries
+      .map(([key, entryValue]) => {
+        if (isPlainObject(entryValue) || Array.isArray(entryValue)) {
+          return `${pad}${key}:\n${indent(renderYaml(entryValue, depth + 1), depth + 1)}`;
+        }
+        return `${pad}${key}: ${renderYaml(entryValue, 0)}`;
+      })
+      .join('\n');
+  }
+  return JSON.stringify(value);
+}
+
+function indent(text, depth) {
+  const pad = '  '.repeat(depth);
+  return String(text)
+    .split('\n')
+    .map((line) => `${pad}${line}`)
+    .join('\n');
+}
+
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toTree(data) {
+  if (!isPlainObject(data)) return JSON.stringify(data);
+  if (isPlainObject(data.dsl) && Array.isArray(data.dsl.nodes)) return wrappedDslToTree(data);
+  if (Array.isArray(data.nodes)) return renderDslBody(data, []).join('\n');
+  if (Array.isArray(data.sections)) return sectionListToTree(data);
+  if (Array.isArray(data.svgs)) return svgListToTree(data);
+  if (isPlainObject(data.svgs) || isPlainObject(data.texts)) return kvMapToTree(data);
+  return JSON.stringify(data);
+}
+
+function wrappedDslToTree(obj) {
+  const lines = [];
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === 'dsl') continue;
+    lines.push(`${key}: ${JSON.stringify(value)}`);
+  }
+  renderDslBody(obj.dsl, lines);
+  return lines.join('\n');
+}
+
+function renderDslBody(dsl, lines) {
+  lines.push('globalVars:');
+  if (isPlainObject(dsl.styles)) {
+    for (const [key, value] of Object.entries(dsl.styles)) {
+      lines.push(`  ${key}: ${JSON.stringify(value)}`);
+    }
+  }
+  if (dsl.components !== undefined) {
+    lines.push(`components: ${JSON.stringify(dsl.components)}`);
+  }
+  for (const [key, value] of Object.entries(dsl)) {
+    if (key === 'styles' || key === 'nodes' || key === 'components') continue;
+    lines.push(`${key}: ${JSON.stringify(value)}`);
+  }
+  lines.push('tree:');
+  for (const node of dsl.nodes || []) {
+    renderNode(node, 1, lines);
+  }
+  return lines;
+}
+
+function sectionListToTree(obj) {
+  const lines = [];
+  const sections = Array.isArray(obj.sections) ? obj.sections : [];
+  const reservedKeys = new Set(['type', 'id', 'name', 'nodeCount', 'x', 'y', 'width', 'height', 'layoutStyle']);
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === 'sections') continue;
+    lines.push(`${key}: ${JSON.stringify(value)}`);
+  }
+  lines.push('sections:');
+  sections.forEach((section, index) => {
+    const ls = section.layoutStyle || {};
+    const width = section.width ?? ls.width;
+    const height = section.height ?? ls.height;
+    const x = section.x ?? ls.relativeX;
+    const y = section.y ?? ls.relativeY;
+    const extras = [];
+    pushIf(extras, 'nodeCount', section.nodeCount);
+    lines.push(`  [${index}] ${section.type || '?'} ${section.id || '?'} ${quote(section.name)} ${fmtNum(width)}x${fmtNum(height)} @${fmtNum(x)},${fmtNum(y)}${extras.length ? ` ${extras.join(' ')}` : ''}`);
+    for (const [key, value] of Object.entries(section)) {
+      if (reservedKeys.has(key) || value === undefined) continue;
+      lines.push(`    ${key}=${JSON.stringify(value)}`);
+    }
+  });
+  return lines.join('\n');
+}
+
+function svgListToTree(obj) {
+  const lines = [];
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === 'svgs') continue;
+    lines.push(`${key}: ${JSON.stringify(value)}`);
+  }
+  const svgs = Array.isArray(obj.svgs) ? obj.svgs : [];
+  if (svgs.length === 0) {
+    lines.push('svgs: []');
+    return lines.join('\n');
+  }
+  lines.push('svgs:');
+  svgs.forEach((entry, index) => {
+    lines.push(`  [${index}] ${quote(entry.name)} (${entry.id || '?'})`);
+    const svg = entry.svg;
+    if (typeof svg === 'string' && !svg.includes('\n')) {
+      lines.push(`    ${svg}`);
+    } else if (typeof svg === 'string') {
+      for (const line of svg.split('\n')) lines.push(`    ${line}`);
+    } else {
+      lines.push(`    ${JSON.stringify(svg)}`);
+    }
+  });
+  return lines.join('\n');
+}
+
+function kvMapToTree(obj) {
+  const lines = [];
+  const mapKey = isPlainObject(obj.svgs) ? 'svgs' : isPlainObject(obj.texts) ? 'texts' : null;
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === mapKey) continue;
+    lines.push(`${key}: ${JSON.stringify(value)}`);
+  }
+  if (mapKey) {
+    const map = obj[mapKey];
+    const entries = Object.entries(map);
+    if (entries.length === 0) {
+      lines.push(`${mapKey}: {}`);
+    } else {
+      lines.push(`${mapKey}:`);
+      for (const [key, value] of entries) renderKvEntry(key, value, '  ', lines);
+    }
+  }
+  return lines.join('\n');
+}
+
+function renderKvEntry(key, value, pad, lines) {
+  if (typeof value === 'string' && !value.includes('\n')) {
+    lines.push(`${pad}${key}: ${value}`);
+    return;
+  }
+  lines.push(`${pad}${key}:`);
+  const valuePad = `${pad}  `;
+  if (typeof value === 'string') {
+    for (const line of value.split('\n')) lines.push(`${valuePad}${line}`);
+  } else {
+    lines.push(`${valuePad}${JSON.stringify(value)}`);
+  }
+}
+
+function renderNode(node, depth, lines) {
+  const pad = '  '.repeat(depth);
+  const layoutStyle = node.layoutStyle || {};
+  const reservedLayoutKeys = new Set(['width', 'height', 'relativeX', 'relativeY']);
+  const reservedNodeKeys = new Set(['type', 'id', 'name', 'layoutStyle', 'fill', 'strokeColor', 'strokeType', 'strokeAlign', 'strokeWidth', 'componentId', 'componentInfo', 'flexContainerInfo', 'text', 'textColor', 'children']);
+  const extras = [];
+  for (const [key, value] of Object.entries(layoutStyle)) {
+    if (reservedLayoutKeys.has(key) || value === undefined || value === null) continue;
+    extras.push(`${key}=${value}`);
+  }
+  pushIf(extras, 'fill', node.fill);
+  if (node.strokeColor) {
+    extras.push(`stroke=${node.strokeColor}${node.strokeWidth ? `/${node.strokeWidth}` : ''}`);
+  } else if (node.strokeWidth) {
+    pushIf(extras, 'strokeWidth', node.strokeWidth);
+  }
+  pushIf(extras, 'strokeType', node.strokeType);
+  pushIf(extras, 'strokeAlign', node.strokeAlign);
+  pushIf(extras, 'component', node.componentId);
+  lines.push(`${pad}${node.type || '?'} ${node.id || '?'} ${quote(node.name)} ${fmtNum(layoutStyle.width)}x${fmtNum(layoutStyle.height)} @${fmtNum(layoutStyle.relativeX)},${fmtNum(layoutStyle.relativeY)}${extras.length ? ` ${extras.join(' ')}` : ''}`);
+
+  const componentInfo = node.componentInfo;
+  if (isPlainObject(componentInfo)) {
+    const properties = componentInfo.properties;
+    if (isPlainObject(properties)) {
+      for (const [key, value] of Object.entries(properties)) {
+        lines.push(`${pad}  prop ${key}=${JSON.stringify(value)}`);
+      }
+    }
+    for (const [key, value] of Object.entries(componentInfo)) {
+      if (key === 'properties' || value === undefined) continue;
+      lines.push(`${pad}  ${key}=${JSON.stringify(value)}`);
+    }
+  }
+
+  if (node.flexContainerInfo !== undefined) {
+    lines.push(`${pad}  flex ${JSON.stringify(node.flexContainerInfo)}`);
+  }
+
+  if (Array.isArray(node.text)) {
+    for (const textNode of node.text) {
+      const raw = textNode?.text;
+      const content = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      lines.push(`${pad}  text ${quote(content)}${textNode?.font ? ` font=${textNode.font}` : ''}`);
+    }
+  }
+
+  if (node.textColor !== undefined) {
+    lines.push(`${pad}  textColor ${JSON.stringify(node.textColor)}`);
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    if (reservedNodeKeys.has(key) || value === undefined) continue;
+    lines.push(`${pad}  ${key}=${JSON.stringify(value)}`);
+  }
+
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) renderNode(child, depth + 1, lines);
+  }
+}
+
+function parseHeaderMap(value) {
+  const items = Array.isArray(value) ? value : value ? [value] : [];
+  const headers = {};
+  for (const item of items) {
+    if (typeof item !== 'string') continue;
+    const separatorIndex = item.indexOf(':');
+    if (separatorIndex <= 0) continue;
+    const key = item.slice(0, separatorIndex).trim();
+    const headerValue = item.slice(separatorIndex + 1).trim();
+    if (!key) continue;
+    headers[key] = headerValue;
+  }
+  return headers;
+}
+
+function pushIf(arr, label, value) {
+  if (value !== undefined && value !== null && value !== '') arr.push(`${label}=${value}`);
+}
+
+function fmtNum(value) {
+  return value === undefined || value === null ? '?' : String(value);
+}
+
+function quote(value) {
+  const text = value === undefined || value === null ? '' : String(value);
+  return `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 async function installSkill(args, kind) {
@@ -813,4 +1526,8 @@ export {
   isIconLikeNode,
   normalizeFileId,
   cloneJson,
+  formatOutput,
+  detectBrowserCodeType,
+  sanitizeOutputName,
+  ensureOutputExtension,
 };

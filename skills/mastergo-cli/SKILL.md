@@ -42,9 +42,10 @@ argument-hint: "[mastergo-url|command]"
 
 | 场景 | 优先工具 |
 |------|----------|
-| 获取 DSL 和生成规则 | `mastergo dsl`，输出包含 `dsl`、`componentDocumentLinks`、`rules`；大文件可加 `--simplify` 降低 token 消耗 |
-| 大设计稿 / 完整页面实现 | 优先 `mastergo design-sections` 获取概览和所有 section，再用 `mastergo design-svgs` / `mastergo design-texts` 补视觉和文本 |
+| 获取 DSL 和生成规则 | `mastergo dsl`，输出包含 `dsl`、`componentDocumentLinks`、`rules`；大文件可加 `--simplify` 降低 token 消耗，或加 `--format yaml/tree` 降低上下文占用 |
+| 大设计稿 / 完整页面实现 | 优先 `mastergo design-sections` 获取概览和所有 section，再用 `mastergo design-svgs` / `mastergo design-texts` 补视觉和文本；需要省 token 时优先 `--format tree` |
 | 获取 D2C 代码和资源 | `mastergo d2c`，落盘 Vue/HTML 代码、SVG、图片资源 |
+| 已打开页面里直接提取当前选中图层代码 | `mastergo browser-d2c`，通过页面宿主 `mg.codegen.getCode(selection.id)` 获取代码和静态资源 |
 | HTML 代码同步到设计稿 | `mastergo c2d`，支持 `--short-link` 或 `--file-id` |
 | 获取站点 / 页面元信息 | `mastergo meta`，输出包含 `result` 和 meta 规则 |
 | 获取组件文档链接内容 | `mastergo component-doc` |
@@ -95,6 +96,8 @@ mastergo help
 mastergo analyze "https://mastergo.com/goto/LhGgBAK"
 mastergo dsl "https://mastergo.com/goto/LhGgBAK"
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --simplify
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" --format tree
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" --header "x-tenant-id: demo"
 mastergo design-sections "https://mastergo.com/goto/LhGgBAK"
 mastergo design-sections "https://mastergo.com/goto/LhGgBAK" --section-index 0
 mastergo design-svgs "https://mastergo.com/goto/LhGgBAK"
@@ -102,6 +105,7 @@ mastergo design-texts "https://mastergo.com/goto/LhGgBAK"
 mastergo d2c --d2c-url "mastergo://getd2c/176452330285910-2-2845" --out-dir ./mastergo-output
 # 或
 mastergo d2c --content-id 176452330285910-2-2845 --document-id 176452330285910 --out-dir ./mastergo-output
+mastergo browser-d2c --page-url "pri.cloudglab.cn/file/188180928866602" --out-dir ./mastergo-browser-output
 mastergo c2d --file ./index.html --short-link "https://mastergo.com/file/176452330285910?layer_id=1:23"
 mastergo c2d --file ./index.html --file-id 176452330285910 --layer-id 1:23
 mastergo meta --file-id 176452330285910 --layer-id 1:23
@@ -115,7 +119,10 @@ mastergo fetch-docs "https://example.com/button.mdx"
 - 用户说“提取 SVG，放到 html 中预览 / Extract SVG and preview in HTML”：优先用 `mastergo extract-svg <url>` 获取目标图层 SVG，必要时用 `mastergo design-svgs <url>` 获取缓存 SVG HTML，并保存一个本地 HTML 预览文件
 - 用户说“完整页面 / 大设计稿 / 高保真实现 / section”：优先用 `mastergo design-sections <url>` 获取 section 概览，再按 `--section-index` 获取所有 section（建议 3-5 个一批）；随后用 `mastergo design-svgs <url>` 获取缓存 SVG HTML，用 `mastergo design-texts <url>` 获取精确文本。只有这些接口不可用或失败时，才退回 `mastergo dsl`
 - 用户说“解析设计稿 / 获取 DSL / 看结构”：如果是普通小稿，用 `mastergo dsl`，必要时再用 `mastergo analyze` 做人类可读摘要；如果用户强调 token 消耗、上下文太大、图标路径太多，给 `mastergo dsl` 增加 `--simplify`
-- 用户说“设计转代码 / D2C / 生成 Vue 或 HTML”：用 `mastergo d2c`，并传 `--d2c-url mastergo://getd2c/...`（或 `--content-id` + `--document-id`）和 `--out-dir`；代码文件、SVG、图片资源都应落盘，代码文件按接口返回自动保存为 `.vue` 或 `.html`；`contentId` 接受两种形态：① D2C 任务运行 ID（设计稿里点 D2C 后给的 `mastergo://getd2c/<id>`）；② 由 file 链接推导：`fileId` 加 DSL 展开的完整节点路径拼接（如 `<fileId>-<layerId>/<expandedNodeId>`）。如果 file 链接当前 `layer_id` 直接拼接返回 10009，不要说“这个链接获取不到”，也不要说“换成子层获取”；应先用 `mastergo dsl <file-link>` 获取当前入口的展开节点路径，再用 `fileId-完整节点路径` 继续尝试。CLI 会把文件名里的 `/` 替换为 `_`。
+- 用户说“输出太大 / token 太多 / 想要更紧凑的结构”：优先给 `dsl` / `design-sections` / `design-svgs` / `design-texts` / `extract-svg` / `meta` 加 `--format tree`；需要更通用的结构化格式时用 `--format yaml`
+- 用户说“私有化环境 / 网关拦截 / 需要额外 header”：使用 `--header "Key: Value"`，可重复传入多个 header
+- 用户说“设计转代码 / D2C / 生成 Vue 或 HTML”：优先用 `mastergo d2c --d2c-url mastergo://getd2c/...`，这是最可靠输入。也可传 `--content-id` + `--document-id`。代码文件、SVG、图片资源都应落盘，代码文件按接口返回自动保存为 `.vue` 或 `.html`。普通 `file` 链接只保证 DSL 可读取，不保证一定能自动推导出可用的 D2C `contentId`；如果推导后返回 `10009`，应明确告诉用户需要真实的 D2C 任务 URI，而不是继续盲猜路径。CLI 会把文件名里的 `/` 替换为 `_`。
+- 用户说“页面已经打开了 / 浏览器里 D2C 面板已经能看到代码”：优先使用 `mastergo browser-d2c`，直接连接当前 Chrome 页面的宿主 `mg.codegen.getCode(selection.id)`，这比继续猜 `contentId` 更贴近真实系统行为。
 - 用户说“代码同步到设计稿 / C2D”：用 `mastergo c2d`；可传 `--short-link`，但只把 URL 中的 `layer_id` 当作图层 ID，禁止把 `pageid/page_id` 当作 `layerId`
 - 用户说“完整网站 / 页面配置 / meta”：用 `mastergo meta`
 - 用户说“Generator / 组件开发工作流”：主动使用 `mastergo component-workflow`，`--root` 必须是工作区绝对路径
@@ -130,3 +137,12 @@ mastergo fetch-docs "https://example.com/button.mdx"
 - `references/meta.md`
 - `references/component-workflow.md`
 - `references/d2c-notes.md`
+
+## 输出消费约束（强制）
+
+调用本 CLI 的列表型命令（`listProjects` / `listFiles` / `listComponents` 等）时：
+
+- **必须**把响应中的 `summary.highlight` 作为第一句话回复给用户。
+- **禁止**对 `items` 数组做字段抽取、重新聚合、状态分组、日期换算、JSON 解析后再组装 —— CLI 输出即为最终答案，重复加工会导致字段猜错、层级取错、聚合算错。
+- 当 `meta.processed === true` 时，认定输出已规整，直接展示。
+- 只有当用户明确要求“逐条展示”时才遍历 `items`，且不要再做二次清洗。
