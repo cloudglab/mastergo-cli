@@ -145,3 +145,6 @@ __pycache__
 .cursor/
 .codex/
 .reasonix/
+
+# Browser D2C local output
+tmp-browser-d2c-local/

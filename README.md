@@ -88,6 +88,9 @@ export API_BASE_URL="https://mastergo.com"
 # Optional proxy
 export HTTPS_PROXY="http://127.0.0.1:7890"
 
+# Optional default format for design-data commands
+export DEFAULT_FORMAT="tree"
+
 # Legacy Python helper compatibility
 export MASTERGO_ENDPOINT="https://mastergo.com"
 ```
@@ -192,6 +195,8 @@ These prompts can be handed to an AI Skill / Agent and mapped to `mastergo-cli` 
 mastergo dsl "https://mastergo.com/goto/LhGgBAK"
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --source-layer-id 1:24
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --proxy http://127.0.0.1:7890
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" --header "x-tenant-id: demo"
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" --format tree
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --simplify
 mastergo analyze "https://mastergo.com/goto/LhGgBAK"
 mastergo analyze "https://mastergo.com/goto/LhGgBAK" --format json
@@ -206,6 +211,7 @@ mastergo extract-svg "https://mastergo.com/goto/LhGgBAK" --background-color '#ff
 # D2C code and assets
 mastergo d2c --d2c-url "mastergo://getd2c/176452330285910-2-2845" --out-dir ./mastergo-output
 mastergo d2c --content-id 176452330285910-2-2845 --document-id 176452330285910 --out-dir ./mastergo-output
+mastergo browser-d2c --page-url "pri.cloudglab.cn/file/188180928866602" --out-dir ./mastergo-browser-output
 
 # C2D sync
 mastergo c2d --file ./index.html --short-link "https://mastergo.com/file/176452330285910?layer_id=1:23"
@@ -229,10 +235,46 @@ mastergo fetch-docs "https://example.com/button.mdx"
 | `mastergo extract-svg` | Retrieve raw SVG snippets for a specific design layer |
 | `mastergo analyze` | Print human-readable DSL summaries with legacy zero-dependency Python scripts |
 | `mastergo d2c` | Retrieve D2C data and save Vue/HTML code, SVG, and image resources locally |
+| `mastergo browser-d2c` | Connect to an already-open Chrome MasterGo page and call `mg.codegen.getCode(selection.id)` to save Vue/HTML code and static resources |
 | `mastergo c2d` | Read local HTML and sync it back to MasterGo; short links only use `layer_id` |
 | `mastergo meta` | Retrieve site/page metadata and meta generation rules |
 | `mastergo component-doc` | Fetch linked component documentation |
 | `mastergo component-workflow` | Create `.mastergo/component-workflow.md`, component JSON, and SVG assets |
+
+## Output formats
+
+The design-data commands support `--format json|yaml|tree`:
+
+- `json`: default, safest for scripts and exact machine consumption
+- `yaml`: fewer tokens than JSON for many large payloads
+- `tree`: experimental compact tree view for large DSL and section payloads
+
+Supported commands:
+
+- `mastergo dsl`
+- `mastergo design-sections`
+- `mastergo design-svgs`
+- `mastergo design-texts`
+- `mastergo extract-svg`
+- `mastergo meta`
+
+Priority:
+
+- per-command `--format`
+- environment `DEFAULT_FORMAT`
+- fallback `json`
+
+## Custom headers
+
+For private deployments or gateway-authenticated environments, you can repeat `--header`:
+
+```bash
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" \
+  --header "x-tenant-id: demo" \
+  --header "x-env: staging"
+```
+
+These headers are forwarded with the same request as the token header.
 
 ## DSL simplification
 
@@ -264,7 +306,7 @@ Call `design-sections` once without `--section-index` to get the overview, then 
 1. A D2C task run id, for example `mastergo://getd2c/<id>`.
 2. A derived file/layer path, for example `<fileId>-<layerId>[/<expandedNodeId>...]`.
 
-If a direct file URL derivation returns `10009`, first call `mastergo dsl <file-link>` to inspect expanded node paths, then retry with the full layer path. `/` in ids is sanitized to `_` for output filenames.
+`mastergo://getd2c/<id>` is the most reliable D2C input. A plain `file` link is always valid for DSL retrieval, but it does **not** guarantee that `mastergo-cli` can derive a working D2C `contentId` automatically. Some designs can be mapped from expanded DSL paths; others cannot. If a derivation attempt returns `10009`, treat the file link as a design-data entry only and use a real `mastergo://getd2c/<id>` when available. When the MasterGo page is already open in Chrome and the D2C plugin is available, prefer `mastergo browser-d2c` to call the page's host `mg.codegen.getCode(selection.id)` directly. `/` in ids is sanitized to `_` for output filenames.
 
 Generated D2C resources follow the API `resourcePath` field. The code file is saved as `.vue` when `frameType` or code content indicates Vue; otherwise it is saved as `.html`. When `resourcePath` is absent, images are written to `asset/images` and SVGs to `asset/icons` under `--out-dir`.
 

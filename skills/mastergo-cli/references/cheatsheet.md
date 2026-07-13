@@ -14,11 +14,11 @@
 | 命令 | 参数 | 说明 |
 |------|------|------|
 | `mastergo analyze` | `<mastergo-url> [--format tree|json|flat]` | 通过 Python 脚本输出人类可读的 DSL 摘要 |
-| `mastergo dsl` / `mastergo get-dsl` | `<url\|fileId layerId> [--source-layer-id ID] [--rule RULE] [--no-rule] [--simplify]` | 获取 DSL、`componentDocumentLinks` 和规则；`--simplify` 把图标类节点替换为 `ICON_PLACEHOLDER` |
-| `mastergo design-sections` / `mastergo get-design-sections` | `<url\|fileId layerId> [--source-layer-id ID] [--section-index N]` | 大稿 section 概览（`N` 不传时返回所有 section 列表） |
-| `mastergo design-svgs` / `mastergo get-design-svgs` | `<url\|fileId layerId> [--source-layer-id ID]` | 获取缓存 SVG HTML |
-| `mastergo design-texts` / `mastergo get-design-texts` | `<url\|fileId layerId> [--source-layer-id ID]` | 获取精确长文本 |
-| `mastergo extract-svg` | `<url\|fileId layerId> [--background-color #fff]` | 把图层导出为 SVG |
+| `mastergo dsl` / `mastergo get-dsl` | `<url\|fileId layerId> [--source-layer-id ID] [--rule RULE] [--header "Key: Value"] [--format json\|yaml\|tree] [--no-rule] [--simplify]` | 获取 DSL、`componentDocumentLinks` 和规则；`--simplify` 把图标类节点替换为 `ICON_PLACEHOLDER` |
+| `mastergo design-sections` / `mastergo get-design-sections` | `<url\|fileId layerId> [--source-layer-id ID] [--section-index N] [--format json\|yaml\|tree]` | 大稿 section 概览（`N` 不传时返回所有 section 列表） |
+| `mastergo design-svgs` / `mastergo get-design-svgs` | `<url\|fileId layerId> [--source-layer-id ID] [--format json\|yaml\|tree]` | 获取缓存 SVG HTML |
+| `mastergo design-texts` / `mastergo get-design-texts` | `<url\|fileId layerId> [--source-layer-id ID] [--format json\|yaml\|tree]` | 获取精确长文本 |
+| `mastergo extract-svg` | `<url\|fileId layerId> [--background-color #fff] [--format json\|yaml\|tree]` | 把图层导出为 SVG |
 
 ## D2C / C2D
 
@@ -31,7 +31,7 @@
 
 | 命令 | 参数 | 说明 |
 |------|------|------|
-| `mastergo meta` | `--file-id ID --layer-id ID [--source-layer-id ID]` | 获取站点 / 页面元信息，输出含 `result` 和 meta 规则 |
+| `mastergo meta` | `--file-id ID --layer-id ID [--source-layer-id ID] [--format json\|yaml\|tree]` | 获取站点 / 页面元信息，输出含 `result` 和 meta 规则 |
 | `mastergo component-doc` | `<url>` | 抓取组件文档页文本 |
 | `mastergo component-workflow` | `--root PATH --file-id ID --layer-id ID [--source-layer-id ID]` | 在 `<root>/.mastergo/` 生成组件工作流、组件 JSON 和 SVG 图标 |
 | `mastergo fetch-docs` | `<url...>` | legacy 入口，调用 `mastergo_fetch_docs.py` 抓取文档 |
@@ -51,6 +51,8 @@
 | `--token <token>` | 大部分命令 | 覆盖 token，覆盖 `MASTERGO_TOKEN` 等 |
 | `--url <baseUrl>` | 大部分命令 | 覆盖 endpoint，覆盖 `MASTERGO_ENDPOINT` 等 |
 | `--rule <rule>` | `dsl` | 追加单条 DSL 规则，可重复传入成为数组 |
+| `--header "Key: Value"` | 多个 design-data 命令 | 透传自定义 HTTP 请求头，可重复传入 |
+| `--format json\|yaml\|tree` | 多个 design-data 命令 | 控制 design-data 命令输出格式 |
 | `--no-rule` | `dsl` | 关闭内置规则，仅保留 CLI / 环境变量传入 |
 | `--simplify` | `dsl` | 把图标类节点替换为 `ICON_PLACEHOLDER` |
 | `--source-layer-id <id>` | 多个 | 指定用于回溯的源图层 ID |
@@ -68,6 +70,7 @@
 |------|------|
 | `MASTERGO_TOKEN` / `MASTERGO_API_TOKEN` / `MG_MCP_TOKEN` | API token |
 | `MASTERGO_ENDPOINT` / `API_BASE_URL` | API base URL |
+| `DEFAULT_FORMAT` | design-data 默认输出格式 |
 | `MASTERGO_DISABLE_WRITE=true` | 禁用所有写命令（`c2d` / `uninstall`） |
 | `RULES` | JSON 数组，附加到 `dsl` 输出 `rules` |
 

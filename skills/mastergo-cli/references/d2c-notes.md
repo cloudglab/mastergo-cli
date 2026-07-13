@@ -23,7 +23,7 @@
 3. 如果返回 10009，用 `mastergo dsl <file-link>` 查看当前 layer 在 DSL 中展开后的节点路径
 4. 用 `fileId-完整节点路径` 拼出 contentId 再试 D2C
 
-也就是说，**这个 file 链接本身可以用来获取 Vue/HTML 代码：先用它拿 DSL，再用 DSL 展开的完整节点路径补全 contentId**。本次实测：链接 `https://pri.cloudglab.cn/file/188180928866602?...&layer_id=510:58405` 直接拼 `188180928866602-510-58405` 失败；DSL 展开后存在节点路径 `510:58405/510:56892`，拼成 `188180928866602-510-58405/510-56892` 后成功返回 Vue。
+也就是说，**有些** file 链接可以这样获取 Vue/HTML 代码：先用它拿 DSL，再用 DSL 展开的完整节点路径补全 contentId。本次实测：链接 `https://pri.cloudglab.cn/file/188180928866602?...&layer_id=510:58405` 直接拼 `188180928866602-510-58405` 失败；DSL 展开后存在节点路径 `510:58405/510:56892`，拼成 `188180928866602-510-58405/510-56892` 后成功返回 Vue。
 
 注意：这不是“换成子层获取”，也不是“原链接获取不到”。设计入口仍然是原 file 链接和原 `layer_id=510:58405`；`/510:56892` 只是这个入口在 DSL 展开后的内部节点路径片段，用来补全 D2C 后端需要的 contentId。
 
@@ -40,7 +40,7 @@ CLI 在 `bin/mastergo.js` 的 `detectD2cCodeExtension()` 中优先看 `frameType
 
 实测递归遍历整棵 DSL（`dsl.styles / dsl.nodes / dsl.components` 及其所有子节点），**没有任何 `d2c / contentId / documentId / mastergo://getd2c / codeGen` 字段**。
 
-所以 DSL 不会直接返回现成的 D2C contentId；但 DSL 会提供当前入口的展开节点路径，用来**补全从 file 链接推导出的 D2C contentId**。`mastergo dsl` 和 `mastergo d2c` 是两条接口线，但可以组合使用：file 链接拿 DSL，DSL 提供展开路径，D2C 用拼出的完整路径取代码。
+所以 DSL 不会直接返回现成的 D2C contentId；有些场景下，DSL 会提供当前入口的展开节点路径，用来**补全某些 file 链接推导出的 D2C contentId**。这不是通用规则。`mastergo dsl` 和 `mastergo d2c` 是两条接口线，可以组合使用，但如果完整路径仍然返回 `10009`，应回退为“只能获取 DSL，不能自动推导 D2C”，并改用真实的 `mastergo://getd2c/<id>`。
 
 ## CLI 行为
 

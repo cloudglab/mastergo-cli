@@ -42,6 +42,23 @@ Navigations:
 }
 ```
 
+### `--format` Output Modes
+
+Design-data commands support:
+
+- `--format json`：默认值，最适合脚本精确消费
+- `--format yaml`：相对 JSON 更省 token
+- `--format tree`：实验性的紧凑树形格式，适合大 DSL / section 数据
+
+适用命令：
+
+- `mastergo dsl`
+- `mastergo design-sections`
+- `mastergo design-svgs`
+- `mastergo design-texts`
+- `mastergo extract-svg`
+- `mastergo meta`
+
 ## Key Mapping Patterns
 
 ### Layout → CSS

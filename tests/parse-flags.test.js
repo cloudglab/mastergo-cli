@@ -46,6 +46,21 @@ test('parseFlags: 同一 key 用 = 与分隔混合时也是数组', () => {
   assert.deepEqual(options.rule, ['r1', 'r2']);
 });
 
+test('parseFlags: 解析 --format=value', () => {
+  const { options } = parseFlags(['--format=tree']);
+  assert.equal(options.format, 'tree');
+});
+
+test('parseFlags: 解析 --header value', () => {
+  const { options } = parseFlags(['--header', 'x-tenant-id: demo']);
+  assert.equal(options.header, 'x-tenant-id: demo');
+});
+
+test('parseFlags: 重复 --header 时收集为数组', () => {
+  const { options } = parseFlags(['--header', 'x-a: 1', '--header=x-b: 2']);
+  assert.deepEqual(options.header, ['x-a: 1', 'x-b: 2']);
+});
+
 test('parseFlags: 空 args 返回空对象和数组', () => {
   const { options, positionals } = parseFlags([]);
   assert.deepEqual(options, {});

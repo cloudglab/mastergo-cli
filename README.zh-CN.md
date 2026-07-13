@@ -90,6 +90,9 @@ export API_BASE_URL="https://mastergo.com"
 # 可选代理
 export HTTPS_PROXY="http://127.0.0.1:7890"
 
+# 可选默认输出格式
+export DEFAULT_FORMAT="tree"
+
 # 兼容旧版 Python 辅助脚本
 export MASTERGO_ENDPOINT="https://mastergo.com"
 ```
@@ -194,6 +197,8 @@ export MASTERGO_ENDPOINT="https://mastergo.com"
 mastergo dsl "https://mastergo.com/goto/LhGgBAK"
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --source-layer-id 1:24
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --proxy http://127.0.0.1:7890
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" --header "x-tenant-id: demo"
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" --format tree
 mastergo dsl "https://mastergo.com/goto/LhGgBAK" --simplify
 mastergo analyze "https://mastergo.com/goto/LhGgBAK"
 mastergo analyze "https://mastergo.com/goto/LhGgBAK" --format json
@@ -208,6 +213,7 @@ mastergo extract-svg "https://mastergo.com/goto/LhGgBAK" --background-color '#ff
 # D2C 代码和资源
 mastergo d2c --d2c-url "mastergo://getd2c/176452330285910-2-2845" --out-dir ./mastergo-output
 mastergo d2c --content-id 176452330285910-2-2845 --document-id 176452330285910 --out-dir ./mastergo-output
+mastergo browser-d2c --page-url "pri.cloudglab.cn/file/188180928866602" --out-dir ./mastergo-browser-output
 
 # C2D 同步
 mastergo c2d --file ./index.html --short-link "https://mastergo.com/file/176452330285910?layer_id=1:23"
@@ -231,10 +237,46 @@ mastergo fetch-docs "https://example.com/button.mdx"
 | `mastergo extract-svg` | 获取指定设计图层的原始 SVG 片段 |
 | `mastergo analyze` | 用零依赖 Python 旧脚本输出人类可读 DSL 摘要 |
 | `mastergo d2c` | 获取 D2C 数据，并落盘 Vue/HTML 代码、SVG、图片资源 |
+| `mastergo browser-d2c` | 连接已打开的 Chrome MasterGo 页面，直接调用 `mg.codegen.getCode(selection.id)`，落盘 Vue/HTML 代码和静态资源 |
 | `mastergo c2d` | 读取本地 HTML 并同步回 MasterGo；短链接只使用 `layer_id` |
 | `mastergo meta` | 获取网站 / 页面级元信息，并附带 meta 生成规则 |
 | `mastergo component-doc` | 读取组件文档链接内容 |
 | `mastergo component-workflow` | 创建 `.mastergo/component-workflow.md`、组件 JSON 和 SVG 资源 |
+
+## 输出格式
+
+设计数据类命令支持 `--format json|yaml|tree`：
+
+- `json`：默认值，最适合脚本和精确结构化消费
+- `yaml`：对很多大 payload 来说比 JSON 更省 token
+- `tree`：实验性的紧凑树形视图，适合大 DSL 和 section 数据
+
+支持的命令：
+
+- `mastergo dsl`
+- `mastergo design-sections`
+- `mastergo design-svgs`
+- `mastergo design-texts`
+- `mastergo extract-svg`
+- `mastergo meta`
+
+优先级：
+
+- 单次命令的 `--format`
+- 环境变量 `DEFAULT_FORMAT`
+- 默认回退 `json`
+
+## 自定义请求头
+
+私有化部署或网关鉴权场景下，可重复传 `--header`：
+
+```bash
+mastergo dsl "https://mastergo.com/goto/LhGgBAK" \
+  --header "x-tenant-id: demo" \
+  --header "x-env: staging"
+```
+
+这些 header 会和 token header 一起透传到请求中。
 
 ## DSL 简化
 
@@ -266,7 +308,7 @@ mastergo design-texts "https://mastergo.com/goto/LhGgBAK"
 1. D2C 任务运行 ID，例如 `mastergo://getd2c/<id>`。
 2. 从文件和图层路径推导出来的 ID，例如 `<fileId>-<layerId>[/<expandedNodeId>...]`。
 
-如果 file 链接当前 `layer_id` 直接拼接返回 `10009`，先用 `mastergo dsl <file-link>` 查看展开节点路径，再用完整 layer 路径继续尝试。id 中的 `/` 会被安全化为 `_`，不会污染输出目录。
+`mastergo://getd2c/<id>` 是最可靠的 D2C 输入。普通 `file` 链接始终适合作为 DSL 入口，但**不保证** `mastergo-cli` 一定能自动推导出可用的 D2C `contentId`。有些设计稿可以通过展开后的 DSL 路径映射出来，有些则不行；如果推导后返回 `10009`，应把该链接视为设计数据入口，并优先使用真实的 `mastergo://getd2c/<id>`。如果 MasterGo 页面已经在 Chrome 中打开，且页面内 D2C 插件可用，优先使用 `mastergo browser-d2c`，它会直接调用页面宿主 `mg.codegen.getCode(selection.id)`。id 中的 `/` 会被安全化为 `_`，不会污染输出目录。
 
 D2C 资源目录遵循接口返回的 `resourcePath` 字段；代码会根据返回的 `frameType` 或代码内容自动保存为 `.vue` 或 `.html`；没有 `resourcePath` 时，图片默认写入 `--out-dir/asset/images`，SVG 默认写入 `--out-dir/asset/icons`。
 

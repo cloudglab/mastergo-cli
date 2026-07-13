@@ -1,12 +1,18 @@
 # AGENTS.md
 
-给 AI Agent / Skill 维护者看的项目说明。`README.md` 面向用户，只保留安装方式、命令清单和场景化用法；实现细节、已知限制、写操作保护、环境变量和发布说明放在这里。
+给 AI Agent / Skill 维护者看的项目说明。`README.md` 面向用户，只保留长期稳定的安装方式、命令清单和场景化用法；实现细节、已知限制、写操作保护、环境变量、上游同步规则和发布说明放在这里。工程层面的长期约定见 `design.md`。
 
 ## 项目定位
 
 `@cloudglab/mastergo-cli` 是面向 MasterGo 设计平台的命令行 + AI Skill 工具包，当前以单文件 JavaScript 实现（`bin/mastergo.js`），无需构建步骤、TypeScript 或额外依赖分层。
 
 核心目标：把 MasterGo 的 DSL、D2C（设计稿 → 代码）、C2D（代码 → 设计稿）、站点元信息、组件文档和组件开发工作流能力暴露给命令行、脚本和 AI Skill 使用。
+
+## 文档边界
+
+- README 不记录“这版补了什么”“本次修复了什么”“发版摘要”。
+- 版本变更、兼容说明、发布回顾统一写入 `CHANGELOG.md` 或 Release notes。
+- `design.md` 记录工程约定，不把这类内容塞进 README。
 
 ## Agent 使用原则
 
@@ -15,6 +21,7 @@
 - 当前环境不方便安装全局时，才临时使用 `npx -y @cloudglab/mastergo-cli@latest <command>`。
 - 解析 MasterGo 链接时，优先使用 `design-sections` + `design-svgs` + `design-texts` 三段式获取大稿，避免一次性 `dsl` 触发 token 过载；只有在接口不可用或失败时才退回 `dsl`。
 - 大稿 / 图标密集场景下，给 `mastergo dsl` 加 `--simplify`，把图标类节点替换为 `ICON_PLACEHOLDER`。
+- 需要最省 token 的设计数据输出时，可优先传 `--format tree` 或 `--format yaml`；需要完全稳定的结构化消费时仍优先 `json`。
 - 默认只读；只有 `c2d` 是写操作，真实写入必须传 `--confirm=true`。如需禁用写操作，可设置 `MASTERGO_DISABLE_WRITE=true`。
 
 ## 命令清单
@@ -27,7 +34,9 @@
 - `design-svgs | get-design-svgs <url|fileId layerId> [--source-layer-id ID]`：获取缓存 SVG HTML。
 - `design-texts | get-design-texts <url|fileId layerId> [--source-layer-id ID]`：获取精确文本。
 - `extract-svg <url|fileId layerId> [--background-color #fff]`：把图层导出为 SVG。
+- 所有 design-data 命令都支持 `--format json|yaml|tree`：`dsl`、`design-sections`、`design-svgs`、`design-texts`、`extract-svg`、`meta`。
 - `d2c [--d2c-url mastergo://getd2c/<contentId> | --content-id ID --document-id ID] [--out-dir DIR]`：获取 D2C 任务结果并落盘代码 / SVG / 图片。
+- `browser-d2c [--page-url URL] [--page-id N] [--out-dir DIR] [--chrome-debug-url URL]`：连接已打开的 Chrome MasterGo 页面，直接调用宿主 `mg.codegen.getCode(selection.id)` 落盘代码和静态资源。
 - `c2d --file HTML (--short-link URL | --file-id ID [--layer-id ID]) [--confirm true]`：把本地 HTML 推回设计稿（写）。
 - `meta --file-id ID --layer-id ID [--source-layer-id ID]`：获取站点 / 页面元信息。
 - `component-doc <url>`：抓取组件文档页文本。
@@ -40,6 +49,7 @@
 
 - DSL 拉取：`dsl` / `get-dsl` 支持 URL 或 `fileId layerId`，可选 `--simplify` 减少 token 消耗。
 - D2C 落盘：`d2c` 支持 `mastergo://getd2c/<contentId>` 短链或 `content-id + document-id`，按 `frameType` 自动选择 `.vue` / `.html` 后缀；SVG / 图片资源落盘到 `asset/icons` / `asset/images`。
+- 浏览器辅助 D2C：`browser-d2c` 不依赖猜测 `contentId`，而是依赖页面已打开并暴露 `mg.codegen.getCode(selection.id)`；当前仅支持本机已开启 Chrome DevTools (`127.0.0.1:9222`) 的场景。
 - C2D 写保护：`c2d` 默认预览；只有 `--confirm=true` 才真正 POST 到 `/mcp/c2d`；`MASTERGO_DISABLE_WRITE=true` 时直接禁用。
 - 大稿工作流：`design-sections` 概览 → 按 `--section-index` 拉取每个 section → `design-svgs` / `design-texts` 补视觉与文本。
 - 组件工作流：`component-workflow` 生成 `.mastergo/component-workflow.md` + 组件 JSON + SVG 图标。
@@ -48,8 +58,9 @@
 ## 已知限制
 
 - 单文件实现：所有 CLI、HTTP 解析、DSL 处理都在 `bin/mastergo.js` 中；不引入 TypeScript / src 分层 / tsc 构建。如需大量新能力，请先评估是否需要拆分。
+- 上游 `mastergo-magic-mcp` 已经引入 `format/header` 能力；本项目同步这些用户面协议，但不照搬其 TypeScript MCP server 架构。
 - C2D `layer_id`：只把 URL 中的 `layer_id` 视为图层 ID；禁止把 `pageid` / `page_id` 当作 `layerId`。
-- D2C `contentId`：两种形态 ① D2C 任务运行 ID `mastergo://getd2c/<id>`；② `fileId` 拼接 DSL 展开节点路径（如 `<fileId>-<layerId>/<expandedNodeId>`）。file 链接当前 `layer_id` 拼接返回 10009 时，先 `mastergo dsl <file-link>` 获取展开节点路径再试。
+- D2C `contentId`：最可靠的是 D2C 任务运行 ID `mastergo://getd2c/<id>`。`file` 链接只能保证 DSL 可读；有些场景可以继续推导成 `<fileId>-<layerId>/<expandedNodeId>`，但这不是通用规则。若推导后返回 `10009`，不要继续假设 file 链接一定可自动映射到 D2C。
 - Python 脚本遗留：`analyze` 与 `fetch-docs` 通过 `python3` 调用 `skills/mastergo-cli/scripts/` 下的脚本，依赖 Python 3 环境；不需要 Python 时不要调用这两个命令。
 - `--simplify` 的判定：`isIconLikeNode` 当前用类型白名单（PATH / VECTOR / SVG_ELLIPSE / SVG_RECTANGLE）+ 名称关键词（ic-、ic_、ico_、icon、图标）识别图标；容器型节点（`children.length > 0`）即使名字带 icon 关键词也不会被简化。
 - HTTPS 资源降级：远程资源下载遇到 `EPROTO` / `wrong version number` 时自动回退 HTTP 一次；不会无限重试。
@@ -81,6 +92,7 @@ export MASTERGO_ENDPOINT="https://mastergo.com"
 export MASTERGO_API_TOKEN="..."   # 等价于 MASTERGO_TOKEN
 export MG_MCP_TOKEN="..."         # 等价于 MASTERGO_TOKEN
 export API_BASE_URL="..."         # 等价于 MASTERGO_ENDPOINT
+export DEFAULT_FORMAT="tree"      # design-data 默认输出格式：json|yaml|tree
 
 # 写操作保护
 export MASTERGO_DISABLE_WRITE="true"   # 禁用 c2d
@@ -92,6 +104,17 @@ export RULES='["rule 1", "rule 2"]'    # JSON 数组，附加到 dsl 输出 rule
 token 优先级：CLI `--token` > `MASTERGO_TOKEN` > `MASTERGO_API_TOKEN` > `MG_MCP_TOKEN`。
 
 endpoint 优先级：CLI `--url` > `MASTERGO_ENDPOINT` > `API_BASE_URL`，默认 `https://mastergo.com`。
+
+format 优先级：命令级 `--format` > `DEFAULT_FORMAT` > `json`。
+
+自定义 header：
+
+```bash
+mastergo dsl "<url>" --header "x-mg-useraccesstoken: xxx"
+mastergo dsl "<url>" --header "x-foo: bar" --header "x-bar: baz"
+```
+
+用于私有化部署、网关鉴权或额外请求头透传。
 
 ## 安装 / 更新 / 卸载
 

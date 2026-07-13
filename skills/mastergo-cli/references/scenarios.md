@@ -64,6 +64,16 @@ mastergo d2c \
 
 代码文件按 `frameType` 自动落 `.vue` 或 `.html`；SVG 资源到 `asset/icons/`、图片到 `asset/images/`。
 
+如果 MasterGo 页面已经在 Chrome 中打开，且页面里的 D2C PRO 已经可以正常显示右侧代码面板，则优先使用浏览器宿主路径：
+
+```bash
+mastergo browser-d2c \
+  --page-url "pri.cloudglab.cn/file/188180928866602" \
+  --out-dir ./mastergo-browser-output
+```
+
+这条路径会直接连接当前已打开的 Chrome 页面，调用宿主 `mg.codegen.getCode(selection.id)`，不再依赖猜测 `contentId`。
+
 ## 4. 代码同步到设计稿（C2D）
 
 先预览（不真正写入）：
