@@ -148,3 +148,6 @@ __pycache__
 
 # Browser D2C local output
 tmp-browser-d2c-local/
+
+# macOS
+.DS_Store
